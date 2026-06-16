@@ -1,3 +1,4 @@
+<!-- /autoplan restore point: /home/tongli123/.gstack/projects/Recorder/master-autoplan-restore-20260616-195536.md -->
 # Implementation Plan: Recorder App
 
 Generated from design doc: tongli123-unknown-design-20260616-185724.md
@@ -103,3 +104,57 @@ Date: 2026-06-16
 5. Skill consolidation reduces duplicate skills over time
 
 ## Test Plan (TBD — See test plan artifact from /plan-eng-review)
+
+## /autoplan Review Findings
+
+### Phase Sequencing (Revised)
+
+The original plan sequenced: Recording → Knowledge Layer → Skills Engine → Polish.
+Both CEO and Eng reviews agree this is backwards. The Skills Engine is the moat and should ship earlier. Revised:
+
+**Phase 0 (Week 1-2): Validation Gate**
+- Record 5 real meetings/classes with phone voice recorder
+- Manually write ideal structured outputs (ground truth)
+- Spike: whisper.cpp on React Native feasibility (test the native bridge)
+- Gate: prompts must produce acceptable output on real recordings before coding
+
+**Phase 1 (Weeks 3-6): Ship Recording + Summaries**
+- React Native scaffold, recording pipeline, API-based transcription
+- API key management with "Try with sample" demo (no key required for first use)
+- Structured summarization for all modes
+- First App Store submission at end of Phase 1
+
+**Phase 2 (Weeks 7-10): Skills Engine** (moved up from Phase 3)
+- Skill extraction across all modes
+- Skill consolidation with batched LLM merge (single prompt, not pairwise)
+- Cost preview before consolidation runs
+
+**Phase 3 (Weeks 11-14): Knowledge Layer** (moved back from Phase 2)
+- Vector storage, RAG agent, course auto-classification
+- Pure-JS vector search with latency instrumentation and migration trigger
+
+**Phase 4 (Weeks 15-18): Polish & Analytics**
+- Teacher analytics (text-based v1)
+- SQLCipher encryption
+- Background task architecture (or document foreground-only constraint)
+- Error handling, storage management, CI/CD
+
+### Critical Risks (Pre-Build)
+1. **API key onboarding friction** → 90%+ drop-off risk. Mitigation: "Try with sample" no-key demo; consider absorbing API costs into one-time purchase price.
+2. **whisper.cpp integration** → 4-6 week project, not a Phase 1 subtask. Mitigation: Phase 0 spike; use API-based transcription for Phase 1.
+3. **Plan/design doc contradiction** → PLAN.md says whisper.cpp, design doc says API-based. Resolved: API-based for v1.
+4. **App Store policy** → 500MB GGML model download may violate Apple policies. Mitigation: API-based transcription avoids this; research CoreML fallback.
+5. **No background processing** → iOS limits background tasks to ~30s, but LLM calls take 3-5min. Mitigation: document foreground-only as v1 constraint or evaluate expo-task-manager.
+
+## Decision Audit Trail
+
+| # | Phase | Decision | Classification | Principle | Rationale | Rejected |
+|---|-------|----------|----------------|-----------|-----------|----------|
+| 1 | CEO | Phase 0 validation gate added | Mechanical | P6 (action) | Record real sessions before coding — prevents building blind | Skip validation, go straight to code |
+| 2 | CEO | Phase sequencing inverted (Skills Engine before Knowledge Layer) | Taste | P1 (completeness) | Skills are the moat; platform vendors will catch up on transcription | Original sequencing (Knowledge before Skills) |
+| 3 | CEO | API-based transcription for Phase 1, not whisper.cpp | Mechanical | P3 (pragmatic) | Avoids 4-6 week native bridge integration before shipping v1 | On-device whisper.cpp from day one |
+| 4 | Eng | Batched LLM merge for skill consolidation | Mechanical | P3 (pragmatic) | Prevents $50+ silent API charges per consolidation run | Pairwise LLM comparisons |
+| 5 | Eng | Test plan artifact required | Mechanical | P1 (completeness) | 16-week plan shipping to app stores without test plan is unacceptable | Deferred test planning |
+| 6 | Eng | SQLCipher encryption added to Phase 4 | Mechanical | P5 (explicit) | Plaintext SQLite for confidential meetings is a security gap | Unencrypted local storage |
+| 7 | CEO | "Try with sample" demo mode | Mechanical | P3 (pragmatic) | Bypasses 90%+ API key onboarding drop-off | Require API key on first launch |
+| 8 | Eng | Streaming JSON accumulator pattern | Mechanical | P5 (explicit) | Handle incomplete LLM stream chunks gracefully | Show raw text on parse failure |
