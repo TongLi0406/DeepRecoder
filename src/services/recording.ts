@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 
-let AudioRecorder: any = null;
+let AudioModule: any = null;
 let RecordingPresets: any = null;
 let requestPermissions: any = null;
 let setAudioMode: any = null;
@@ -12,9 +12,9 @@ let simulationStart = 0;
 // ─── Lazy-load expo-audio (native only) ───
 
 async function ensureNativeAudio() {
-  if (!AudioRecorder) {
+  if (!AudioModule) {
     const expoAudio = await import("expo-audio");
-    AudioRecorder = expoAudio.AudioRecorder;
+    AudioModule = expoAudio.AudioModule;
     RecordingPresets = expoAudio.RecordingPresets;
     requestPermissions = expoAudio.requestRecordingPermissionsAsync;
     setAudioMode = expoAudio.setAudioModeAsync;
@@ -96,7 +96,7 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
     playsInSilentMode: true,
   });
 
-  recorder = new AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  recorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
   await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
   recorder.record();
   return { simulated: false };
