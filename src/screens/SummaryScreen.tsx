@@ -22,6 +22,9 @@ function StudentSummaryView({ summary }: { summary: StudentSummary }) {
   return (
     <>
       <Text style={styles.section}>Knowledge Points</Text>
+      {summary.knowledgePoints.length === 0 && (
+        <Text style={styles.emptyText}>No knowledge points identified</Text>
+      )}
       {summary.knowledgePoints.map((kp) => (
         <View key={kp.id} style={styles.card}>
           <Text style={styles.cardTitle}>{kp.name}</Text>
@@ -33,6 +36,9 @@ function StudentSummaryView({ summary }: { summary: StudentSummary }) {
       ))}
 
       <Text style={styles.section}>Problem-Solving Approaches</Text>
+      {summary.problemSolvingApproaches.length === 0 && (
+        <Text style={styles.emptyText}>No approaches identified</Text>
+      )}
       {summary.problemSolvingApproaches.map((pa) => (
         <View key={pa.id} style={styles.card}>
           <Text style={styles.cardTitle}>{pa.approach}</Text>
@@ -104,6 +110,9 @@ function MeetingSummaryView({ summary }: { summary: MeetingSummary }) {
   return (
     <>
       <Text style={styles.section}>Decisions</Text>
+      {summary.decisions.length === 0 && (
+        <Text style={styles.emptyText}>No decisions recorded</Text>
+      )}
       {summary.decisions.map((d) => (
         <View key={d.id} style={styles.card}>
           <Text style={styles.cardTitle}>{d.content}</Text>
@@ -112,6 +121,9 @@ function MeetingSummaryView({ summary }: { summary: MeetingSummary }) {
       ))}
 
       <Text style={styles.section}>Action Items</Text>
+      {summary.actionItems.length === 0 && (
+        <Text style={styles.emptyText}>No action items recorded</Text>
+      )}
       {summary.actionItems.map((a) => (
         <View key={a.id} style={styles.card}>
           <Text style={styles.cardTitle}>
@@ -122,6 +134,9 @@ function MeetingSummaryView({ summary }: { summary: MeetingSummary }) {
       ))}
 
       <Text style={styles.section}>Key Points</Text>
+      {summary.keyPoints.length === 0 && (
+        <Text style={styles.emptyText}>No key points recorded</Text>
+      )}
       {summary.keyPoints.map((kp, i) => (
         <View key={i} style={styles.card}>
           <Text style={styles.cardDesc}>- {kp}</Text>
@@ -239,6 +254,17 @@ export default function SummaryScreen() {
           </View>
         )}
 
+        {!processing && !error && !initialSession.transcript && (
+          <View style={styles.warningCard}>
+            <Text style={styles.warningTitle}>No transcript captured</Text>
+            <Text style={styles.warningText}>
+              On-device speech recognition is new in this build. Make sure Google
+              speech services are available on your device. If the issue persists,
+              the microphone may not have picked up audio.
+            </Text>
+          </View>
+        )}
+
         {speakerTranscript && (
           <>
             <Text style={styles.section}>Transcript</Text>
@@ -301,6 +327,15 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 15, fontWeight: "600", color: "#1A1A1A" },
   cardDesc: { fontSize: 13, color: "#5F6368", marginTop: 4, lineHeight: 18 },
   cardHint: { fontSize: 12, color: "#1A73E8", marginTop: 6, fontStyle: "italic" },
+  emptyText: { fontSize: 13, color: "#9AA0A6", marginBottom: 8, fontStyle: "italic" },
+  warningCard: {
+    backgroundColor: "#FEF7E0",
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+  },
+  warningTitle: { fontSize: 14, fontWeight: "600", color: "#E37400" },
+  warningText: { fontSize: 13, color: "#5F6368", marginTop: 4, lineHeight: 18 },
   example: { fontSize: 12, color: "#9AA0A6", marginTop: 2, fontStyle: "italic" },
   headerCard: {
     backgroundColor: "#E8F0FE",

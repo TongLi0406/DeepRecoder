@@ -21,6 +21,68 @@ async function ensureNativeAudio() {
   }
 }
 
+// ─── Native Speech Recognition ───
+
+let sttModule: any = null;
+let sttPartialSub: { remove: () => void } | null = null;
+let sttFinalSub: { remove: () => void } | null = null;
+
+async function ensureNativeSTT() {
+  if (!sttModule) {
+    sttModule = await import("react-native-speech-recognition-kit");
+  }
+}
+
+function removeSttListeners() {
+  if (sttPartialSub) { sttPartialSub.remove(); sttPartialSub = null; }
+  if (sttFinalSub) { sttFinalSub.remove(); sttFinalSub = null; }
+  if (sttModule) {
+    try { sttModule.removeAllListeners("onSpeechPartialResults"); } catch {}
+    try { sttModule.removeAllListeners("onSpeechResults"); } catch {}
+  }
+}
+
+async function startNativeSTT() {
+  try {
+    await ensureNativeSTT();
+    const available = await sttModule.isRecognitionAvailable();
+    if (!available) return;
+
+    await sttModule.setRecognitionLanguage("zh-CN");
+
+    removeSttListeners();
+
+    sttPartialSub = sttModule.addEventListener("onSpeechPartialResults", (event: any) => {
+      if (event?.value && typeof event.value === "string") {
+        transcript = event.value;
+      }
+    });
+
+    sttFinalSub = sttModule.addEventListener("onSpeechResults", (event: any) => {
+      if (event?.value && typeof event.value === "string") {
+        transcript = event.value;
+      }
+    });
+
+    await sttModule.startListening();
+  } catch {
+    // STT unavailable — recording proceeds without transcription
+  }
+}
+
+async function stopNativeSTT() {
+  try {
+    if (sttModule) {
+      await sttModule.stopListening();
+      // Wait briefly for final onSpeechResults event to arrive
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  } catch {
+    // already stopped or unavailable
+  }
+  removeSttListeners();
+}
+
 // ─── Web Speech Recognition ───
 
 let speechRecognition: any = null;
@@ -99,6 +161,10 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
   recorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
   await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
   recorder.record();
+
+  // Start speech recognition (non-blocking — recording proceeds either way)
+  startNativeSTT();
+
   return { simulated: false };
 }
 
@@ -127,11 +193,13 @@ export async function stopRecording(): Promise<{ uri: string; durationMs: number
     });
   }
 
+  await stopNativeSTT();
   await recorder.stop();
   const uri = recorder.uri ?? "";
   const durationMs = (recorder.currentTime ?? 0) * 1000;
+  const capturedTranscript = transcript;
   recorder = null;
-  return { uri, durationMs, transcript: "", simulated: false };
+  return { uri, durationMs, transcript: capturedTranscript, simulated: false };
 }
 
 export function getCurrentTranscript(): string {
@@ -152,6 +220,7 @@ export async function pauseRecording(): Promise<void> {
     return;
   }
   recorder.pause();
+  try { if (sttModule) await sttModule.stopListening(); } catch {}
 }
 
 export async function resumeRecording(): Promise<void> {
@@ -168,6 +237,22 @@ export async function resumeRecording(): Promise<void> {
     return;
   }
   recorder.record();
+  try {
+    if (sttModule) {
+      removeSttListeners();
+      sttPartialSub = sttModule.addEventListener("onSpeechPartialResults", (event: any) => {
+        if (event?.value && typeof event.value === "string") {
+          transcript = event.value;
+        }
+      });
+      sttFinalSub = sttModule.addEventListener("onSpeechResults", (event: any) => {
+        if (event?.value && typeof event.value === "string") {
+          transcript = event.value;
+        }
+      });
+      await sttModule.startListening();
+    }
+  } catch {}
 }
 
 export function isRecordingActive(): boolean {
@@ -178,6 +263,12 @@ export async function cleanupRecording(): Promise<void> {
   if (speechRecognition) {
     try { speechRecognition.stop(); } catch { /* ignore */ }
     speechRecognition = null;
+  }
+  removeSttListeners();
+  if (sttModule) {
+    try { await sttModule.stopListening(); } catch {}
+    try { await sttModule.destroy(); } catch {}
+    sttModule = null;
   }
   if (simulationTimer) {
     clearInterval(simulationTimer);

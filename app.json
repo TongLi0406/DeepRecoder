@@ -8,7 +8,10 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "Speech recognition is used to transcribe your recordings into text."
+      }
     },
     "android": {
       "package": "com.deeprecoder.app",
