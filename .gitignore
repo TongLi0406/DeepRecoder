@@ -40,3 +40,16 @@ yarn-error.*
 /ios
 /android
 .gstack/
+
+# Build outputs
+*.apk
+*.aab
+
+# Temp files
+*.jpg
+*.jpg:Zone.Identifier
+*.Zone.Identifier
+
+# Large model files (keep only tiny)
+assets/models/ggml-base.bin
+assets/models/wget-log

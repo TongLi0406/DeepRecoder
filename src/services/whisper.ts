@@ -2,12 +2,14 @@ import { Platform } from "react-native";
 
 let whisperContext: any = null;
 
+const MODEL_ASSET = require("../../assets/models/ggml-tiny.bin");
+
 export async function initWhisper(): Promise<boolean> {
   if (Platform.OS === "web") return false;
 
   try {
     const whisperRn = await import("whisper.rn" as any);
-    whisperContext = await whisperRn.initWhisper({ filePath: "placeholder" });
+    whisperContext = await whisperRn.initWhisper({ filePath: MODEL_ASSET });
     return true;
   } catch (e: any) {
     console.warn("[Whisper] Init failed:", e?.message);

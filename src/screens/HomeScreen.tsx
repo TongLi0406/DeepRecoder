@@ -95,10 +95,10 @@ export default function HomeScreen() {
     }
     try {
       const { initWhisper } = await import("../services/whisper");
-      Alert.alert("Whisper", "Initializing Whisper model...");
+      Alert.alert("Whisper", "Initializing bundled Whisper model...");
       const ok = await initWhisper();
       if (!ok) {
-        Alert.alert("Whisper", "Failed to initialize. Check model file.");
+        Alert.alert("Whisper", "Failed to initialize. Check network and try again.");
         return;
       }
       Alert.alert("Whisper", "Model loaded! Record something to test auto-transcription.");
