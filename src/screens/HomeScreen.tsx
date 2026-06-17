@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  Platform,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -87,6 +88,25 @@ export default function HomeScreen() {
     navigation.navigate("Summary", { session });
   }, [selectedMode, navigation]);
 
+  const handleWhisperTest = useCallback(async () => {
+    if (Platform.OS === "web") {
+      Alert.alert("Not Available", "Whisper only works on native (Android/iOS). Use the web demo instead.");
+      return;
+    }
+    try {
+      const { initWhisper } = await import("../services/whisper");
+      Alert.alert("Whisper", "Initializing Whisper model...");
+      const ok = await initWhisper();
+      if (!ok) {
+        Alert.alert("Whisper", "Failed to initialize. Check model file.");
+        return;
+      }
+      Alert.alert("Whisper", "Model loaded! Record something to test auto-transcription.");
+    } catch (e: any) {
+      Alert.alert("Whisper Error", e?.message ?? "Unknown error");
+    }
+  }, []);
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Recorder</Text>
@@ -124,6 +144,12 @@ export default function HomeScreen() {
       <TouchableOpacity style={styles.realTestButton} onPress={handleRealTest}>
         <Text style={styles.realTestButtonText}>Test with real transcript (LLM)</Text>
       </TouchableOpacity>
+
+      {Platform.OS !== "web" && (
+        <TouchableOpacity style={styles.whisperButton} onPress={handleWhisperTest}>
+          <Text style={styles.whisperButtonText}>Test Whisper (local STT)</Text>
+        </TouchableOpacity>
+      )}
     </ScrollView>
   );
 }
@@ -171,4 +197,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   realTestButtonText: { color: "#34A853", fontSize: 15, fontWeight: "500" },
+  whisperButton: {
+    marginTop: 8,
+    alignItems: "center",
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#9334E6",
+    borderRadius: 10,
+  },
+  whisperButtonText: { color: "#9334E6", fontSize: 15, fontWeight: "500" },
 });

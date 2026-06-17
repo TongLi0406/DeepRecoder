@@ -215,8 +215,23 @@ export async function stopRecording(): Promise<{ uri: string; durationMs: number
   await recorder.stop();
   const uri = recorder.uri ?? "";
   const durationMs = (recorder.currentTime ?? 0) * 1000;
-  const capturedTranscript = transcript;
+  let capturedTranscript = transcript;
   recorder = null;
+
+  // Fallback: if native STT got no transcript, try Whisper
+  if (!capturedTranscript && uri) {
+    try {
+      const { transcribeWithWhisper } = await import("./whisper");
+      sttStatus = "active";
+      sttError = null;
+      capturedTranscript = await transcribeWithWhisper(uri);
+      transcript = capturedTranscript;
+    } catch (e: any) {
+      sttStatus = "error";
+      sttError = `Whisper failed: ${e?.message ?? "unknown"}`;
+    }
+  }
+
   return { uri, durationMs, transcript: capturedTranscript, simulated: false };
 }
 
