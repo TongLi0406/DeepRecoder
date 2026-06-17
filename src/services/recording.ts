@@ -27,6 +27,12 @@ async function ensureNativeAudio() {
 let sttModule: any = null;
 let sttPartialSub: { remove: () => void } | null = null;
 let sttFinalSub: { remove: () => void } | null = null;
+let sttStatus: "idle" | "active" | "unavailable" | "error" = "idle";
+let sttError: string | null = null;
+
+export function getSttStatus(): { status: string; error: string | null } {
+  return { status: sttStatus, error: sttError };
+}
 
 async function ensureNativeSTT() {
   if (!sttModule) {
@@ -45,9 +51,15 @@ function removeSttListeners() {
 
 async function startNativeSTT() {
   try {
+    sttStatus = "idle";
+    sttError = null;
     await ensureNativeSTT();
     const available = await sttModule.isRecognitionAvailable();
-    if (!available) return;
+    if (!available) {
+      sttStatus = "unavailable";
+      sttError = "Speech recognition not available on this device";
+      return;
+    }
 
     await sttModule.setRecognitionLanguage("zh-CN");
 
@@ -56,18 +68,22 @@ async function startNativeSTT() {
     sttPartialSub = sttModule.addEventListener("onSpeechPartialResults", (event: any) => {
       if (event?.value && typeof event.value === "string") {
         transcript = event.value;
+        sttStatus = "active";
       }
     });
 
     sttFinalSub = sttModule.addEventListener("onSpeechResults", (event: any) => {
       if (event?.value && typeof event.value === "string") {
         transcript = event.value;
+        sttStatus = "active";
       }
     });
 
     await sttModule.startListening();
-  } catch {
-    // STT unavailable — recording proceeds without transcription
+    sttStatus = "active";
+  } catch (e: any) {
+    sttStatus = "error";
+    sttError = e?.message ?? "Speech recognition failed to start";
   }
 }
 

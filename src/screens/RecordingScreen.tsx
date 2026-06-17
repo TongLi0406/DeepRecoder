@@ -17,6 +17,7 @@ import {
   pauseRecording,
   resumeRecording,
   cleanupRecording,
+  getSttStatus,
 } from "../services/recording";
 import { insertSession } from "../services/storage";
 
@@ -47,7 +48,9 @@ export default function RecordingScreen() {
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [simulated, setSimulated] = useState(false);
+  const [sttInfo, setSttInfo] = useState<{ status: string; error: string | null }>({ status: "idle", error: null });
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sttCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordingRef = useRef(false);
   const pausedRef = useRef(false);
   const startTimeRef = useRef<string | null>(null);
@@ -63,6 +66,20 @@ export default function RecordingScreen() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [recording, paused]);
+
+  // Check STT status periodically during recording
+  useEffect(() => {
+    if (recording && !simulated) {
+      sttCheckRef.current = setInterval(() => {
+        setSttInfo(getSttStatus());
+      }, 2000);
+    } else {
+      if (sttCheckRef.current) clearInterval(sttCheckRef.current);
+    }
+    return () => {
+      if (sttCheckRef.current) clearInterval(sttCheckRef.current);
+    };
+  }, [recording, simulated]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -186,6 +203,30 @@ export default function RecordingScreen() {
         </View>
       )}
 
+      {!simulated && sttInfo.status === "unavailable" && (
+        <View style={styles.sttBanner}>
+          <Text style={styles.sttBannerText}>
+            STT unavailable — no transcript will be captured
+          </Text>
+        </View>
+      )}
+
+      {!simulated && sttInfo.status === "error" && (
+        <View style={styles.sttBannerError}>
+          <Text style={styles.sttBannerText}>
+            STT error: {sttInfo.error}
+          </Text>
+        </View>
+      )}
+
+      {!simulated && sttInfo.status === "active" && (
+        <View style={styles.sttBannerActive}>
+          <Text style={styles.sttBannerTextActive}>
+            Speech recognition active
+          </Text>
+        </View>
+      )}
+
       <View style={styles.center}>
         <Text style={styles.timer}>{formatTime(elapsed)}</Text>
 
@@ -271,6 +312,37 @@ const styles = StyleSheet.create({
   },
   simBannerText: {
     color: "#F9AB00",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  sttBanner: {
+    backgroundColor: "rgba(234,67,53,0.15)",
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 8,
+    alignItems: "center",
+  },
+  sttBannerError: {
+    backgroundColor: "rgba(234,67,53,0.15)",
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 8,
+    alignItems: "center",
+  },
+  sttBannerActive: {
+    backgroundColor: "rgba(52,168,83,0.15)",
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 8,
+    alignItems: "center",
+  },
+  sttBannerText: {
+    color: "#EA4335",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  sttBannerTextActive: {
+    color: "#34A853",
     fontSize: 12,
     fontWeight: "500",
   },
