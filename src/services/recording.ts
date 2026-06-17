@@ -1,11 +1,25 @@
 import { Platform } from "react-native";
 
-let Audio: any = null;
-let FileSystem: any = null;
-let recording: any = null;
+let AudioRecorder: any = null;
+let RecordingPresets: any = null;
+let requestPermissions: any = null;
+let setAudioMode: any = null;
+let recorder: any = null;
 let transcript = "";
 let simulationTimer: ReturnType<typeof setInterval> | null = null;
 let simulationStart = 0;
+
+// ─── Lazy-load expo-audio (native only) ───
+
+async function ensureNativeAudio() {
+  if (!AudioRecorder) {
+    const expoAudio = await import("expo-audio");
+    AudioRecorder = expoAudio.AudioRecorder;
+    RecordingPresets = expoAudio.RecordingPresets;
+    requestPermissions = expoAudio.requestRecordingPermissionsAsync;
+    setAudioMode = expoAudio.setAudioModeAsync;
+  }
+}
 
 // ─── Web Speech Recognition ───
 
@@ -42,29 +56,12 @@ function stopWebSpeech(): string {
   return transcript;
 }
 
-// ─── Native Audio ───
-
-async function ensureNativeAudio() {
-  if (!Audio) {
-    Audio = (await import("expo-av")).Audio;
-  }
-  return Audio;
-}
-
-async function ensureNativeFS() {
-  if (!FileSystem) {
-    FileSystem = await import("expo-file-system");
-  }
-  return FileSystem;
-}
-
 // ─── Public API ───
 
 export async function startRecording(): Promise<{ simulated: boolean }> {
   transcript = "";
 
   if (Platform.OS === "web") {
-    // Try real MediaRecorder first
     const hasMedia = typeof navigator !== "undefined" && navigator.mediaDevices;
     if (hasMedia) {
       try {
@@ -77,7 +74,7 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
           if (e.data.size > 0) chunks.push(e.data);
         };
         mediaRecorder.start(1000);
-        recording = { mediaRecorder, chunks, stream };
+        recorder = { mediaRecorder, chunks, stream, simulated: false };
         startWebSpeech();
         return { simulated: false };
       } catch {
@@ -85,65 +82,56 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
       }
     }
 
-    // Simulation mode — mic unavailable (HTTP, blocked, or no permission)
     simulationStart = Date.now();
     simulationTimer = setInterval(() => {}, 1000);
-    recording = { simulated: true };
-    transcript = "";
+    recorder = { simulated: true };
     return { simulated: true };
   }
 
-  const audio = await ensureNativeAudio();
-  const fs = await ensureNativeFS();
-  await audio.requestPermissionsAsync();
-  await audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true,
+  await ensureNativeAudio();
+
+  await requestPermissions();
+  await setAudioMode({
+    allowsRecording: true,
+    playsInSilentMode: true,
   });
 
-  const { recording: rec } = await audio.Recording.createAsync({
-    ...audio.RecordingOptionsPresets.HIGH_QUALITY,
-    isMeteringEnabled: true,
-  });
-  recording = rec;
+  recorder = new AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+  recorder.record();
   return { simulated: false };
 }
 
 export async function stopRecording(): Promise<{ uri: string; durationMs: number; transcript: string; simulated: boolean }> {
-  if (!recording) throw new Error("No active recording");
+  if (!recorder) throw new Error("No active recording");
 
-  if (Platform.OS === "web" && recording.simulated) {
+  if (Platform.OS === "web" && recorder.simulated) {
     if (simulationTimer) { clearInterval(simulationTimer); simulationTimer = null; }
     const durationMs = Date.now() - simulationStart;
-    recording = null;
+    recorder = null;
     return { uri: "", durationMs, transcript, simulated: true };
   }
 
   if (Platform.OS === "web") {
-    const { mediaRecorder, chunks, stream } = recording;
+    const { mediaRecorder, chunks, stream } = recorder;
     const capturedTranscript = stopWebSpeech();
     return new Promise((resolve) => {
       mediaRecorder.onstop = () => {
         const blob = new Blob(chunks, { type: "audio/webm" });
         const url = URL.createObjectURL(blob);
         stream.getTracks().forEach((t: any) => t.stop());
-        recording = null;
+        recorder = null;
         resolve({ uri: url, durationMs: 0, transcript: capturedTranscript, simulated: false });
       };
       mediaRecorder.stop();
     });
   }
 
-  const audio = await ensureNativeAudio();
-  await recording.stopAndUnloadAsync();
-  const srcUri = recording.getURI();
-  const status = await recording.getStatusAsync();
-  const durationMs = (status as any).durationMillis ?? 0;
-
-  if (!srcUri) throw new Error("Recording URI not available");
-
-  recording = null;
-  return { uri: srcUri, durationMs, transcript: "", simulated: false };
+  await recorder.stop();
+  const uri = recorder.uri ?? "";
+  const durationMs = (recorder.currentTime ?? 0) * 1000;
+  recorder = null;
+  return { uri, durationMs, transcript: "", simulated: false };
 }
 
 export function getCurrentTranscript(): string {
@@ -151,39 +139,39 @@ export function getCurrentTranscript(): string {
 }
 
 export async function pauseRecording(): Promise<void> {
-  if (!recording) return;
+  if (!recorder) return;
   if (Platform.OS === "web") {
-    if (recording.simulated) {
+    if (recorder.simulated) {
       if (simulationTimer) { clearInterval(simulationTimer); simulationTimer = null; }
       return;
     }
-    recording.mediaRecorder.pause();
+    recorder.mediaRecorder.pause();
     if (speechRecognition) {
       try { speechRecognition.stop(); } catch { /* ignore */ }
     }
     return;
   }
-  await recording.pauseAsync();
+  recorder.pause();
 }
 
 export async function resumeRecording(): Promise<void> {
-  if (!recording) return;
+  if (!recorder) return;
   if (Platform.OS === "web") {
-    if (recording.simulated) {
+    if (recorder.simulated) {
       simulationTimer = setInterval(() => {}, 1000);
       return;
     }
-    recording.mediaRecorder.resume();
+    recorder.mediaRecorder.resume();
     if (speechRecognition) {
       try { speechRecognition.start(); } catch { /* ignore */ }
     }
     return;
   }
-  await recording.startAsync();
+  recorder.record();
 }
 
 export function isRecordingActive(): boolean {
-  return recording !== null;
+  return recorder !== null;
 }
 
 export async function cleanupRecording(): Promise<void> {
@@ -195,22 +183,20 @@ export async function cleanupRecording(): Promise<void> {
     clearInterval(simulationTimer);
     simulationTimer = null;
   }
-  if (recording) {
+  if (recorder) {
     try {
       if (Platform.OS === "web") {
-        if (recording.simulated) {
-          // nothing to clean up
-        } else {
-          recording.mediaRecorder.stop();
-          recording.stream.getTracks().forEach((t: any) => t.stop());
+        if (!recorder.simulated) {
+          recorder.mediaRecorder.stop();
+          recorder.stream.getTracks().forEach((t: any) => t.stop());
         }
       } else {
-        await recording.stopAndUnloadAsync();
+        await recorder.stop();
       }
     } catch {
       // already stopped
     }
-    recording = null;
+    recorder = null;
   }
   transcript = "";
 }
@@ -218,7 +204,7 @@ export async function cleanupRecording(): Promise<void> {
 export async function getRecordingFileSize(uri: string): Promise<number> {
   if (Platform.OS === "web") return 0;
   try {
-    const fs = await ensureNativeFS();
+    const fs = await import("expo-file-system");
     const file = new fs.File(uri);
     return file.size ?? 0;
   } catch {
@@ -229,7 +215,7 @@ export async function getRecordingFileSize(uri: string): Promise<number> {
 export async function deleteFile(uri: string): Promise<void> {
   if (Platform.OS === "web") return;
   try {
-    const fs = await ensureNativeFS();
+    const fs = await import("expo-file-system");
     const file = new fs.File(uri);
     if (file.exists) file.delete();
   } catch {

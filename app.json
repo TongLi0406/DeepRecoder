@@ -2,6 +2,7 @@
   "expo": {
     "name": "Recorder",
     "slug": "recorder",
+    "owner": "tongli0406",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,6 +11,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.deeprecoder.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -24,7 +26,13 @@
     "plugins": [
       "expo-secure-store",
       "expo-sqlite",
-      "expo-sharing"
-    ]
+      "expo-sharing",
+      "expo-audio"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "44d7c040-9833-4c2c-9fd3-9cd23119917c"
+      }
+    }
   }
 }
