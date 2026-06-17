@@ -11,7 +11,7 @@ import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../App";
 import type { Session } from "../types";
-import { getAllSessions } from "../services/storage";
+import { getAllSessions, getSessionById } from "../services/storage";
 import { getCourseGroups, type CourseGroup } from "../services/courses";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
@@ -93,8 +93,7 @@ export default function HistoryScreen() {
             <TouchableOpacity
               style={styles.item}
               onPress={() => {
-                getAllSessions().then((sessions) => {
-                  const full = sessions.find((x) => x.id === s.id);
+                getSessionById(s.id).then((full) => {
                   if (full) {
                     navigation.navigate("Summary", { session: full });
                   }

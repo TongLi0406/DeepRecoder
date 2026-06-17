@@ -8,6 +8,7 @@ let recorder: any = null;
 let transcript = "";
 let simulationTimer: ReturnType<typeof setInterval> | null = null;
 let simulationStart = 0;
+let recordingStartTime = 0;
 
 // ─── Lazy-load expo-audio (native only) ───
 
@@ -137,6 +138,7 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
         };
         mediaRecorder.start(1000);
         recorder = { mediaRecorder, chunks, stream, simulated: false };
+        recordingStartTime = Date.now();
         startWebSpeech();
         return { simulated: false };
       } catch {
@@ -187,7 +189,7 @@ export async function stopRecording(): Promise<{ uri: string; durationMs: number
         const url = URL.createObjectURL(blob);
         stream.getTracks().forEach((t: any) => t.stop());
         recorder = null;
-        resolve({ uri: url, durationMs: 0, transcript: capturedTranscript, simulated: false });
+        resolve({ uri: url, durationMs: Date.now() - recordingStartTime, transcript: capturedTranscript, simulated: false });
       };
       mediaRecorder.stop();
     });

@@ -74,7 +74,7 @@ export default function RecordingScreen() {
   // Prevent back navigation while recording
   useEffect(() => {
     const unsubscribe = navigation.addListener("beforeRemove", (e) => {
-      if (!recordingRef.current) return;
+      if (!recordingRef.current && !pausedRef.current) return;
       e.preventDefault();
       setError("Stop recording before leaving.");
     });
