@@ -35,13 +35,7 @@
       "expo-secure-store",
       "expo-sqlite",
       "expo-sharing",
-      "expo-audio",
-      [
-        "expo-av",
-        {
-          "microphonePermission": "Allow Recorder to access your microphone for recording meetings and classes."
-        }
-      ]
+      "expo-audio"
     ],
     "extra": {
       "eas": {
