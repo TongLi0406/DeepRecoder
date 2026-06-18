@@ -27,7 +27,7 @@ async function ensureNativeAudio() {
 let sttModule: any = null;
 let sttPartialSub: { remove: () => void } | null = null;
 let sttFinalSub: { remove: () => void } | null = null;
-let sttStatus: "idle" | "active" | "unavailable" | "error" = "idle";
+let sttStatus: "idle" | "active" | "unavailable" | "error" | "whisper_pending" = "idle";
 let sttError: string | null = null;
 
 export function getSttStatus(): { status: string; error: string | null } {
@@ -50,53 +50,14 @@ function removeSttListeners() {
 }
 
 async function startNativeSTT() {
-  try {
-    sttStatus = "idle";
-    sttError = null;
-    await ensureNativeSTT();
-    const available = await sttModule.isRecognitionAvailable();
-    if (!available) {
-      sttStatus = "unavailable";
-      sttError = "Speech recognition not available on this device";
-      return;
-    }
-
-    await sttModule.setRecognitionLanguage("zh-CN");
-
-    removeSttListeners();
-
-    sttPartialSub = sttModule.addEventListener("onSpeechPartialResults", (event: any) => {
-      if (event?.value && typeof event.value === "string") {
-        transcript = event.value;
-        sttStatus = "active";
-      }
-    });
-
-    sttFinalSub = sttModule.addEventListener("onSpeechResults", (event: any) => {
-      if (event?.value && typeof event.value === "string") {
-        transcript = event.value;
-        sttStatus = "active";
-      }
-    });
-
-    await sttModule.startListening();
-    sttStatus = "active";
-  } catch (e: any) {
-    sttStatus = "error";
-    sttError = e?.message ?? "Speech recognition failed to start";
-  }
+  // Skip native STT on all devices — use Whisper instead
+  sttStatus = "whisper_pending";
+  sttError = null;
+  return;
 }
 
 async function stopNativeSTT() {
-  try {
-    if (sttModule) {
-      await sttModule.stopListening();
-      // Wait briefly for final onSpeechResults event to arrive
-      await new Promise((r) => setTimeout(r, 400));
-    }
-  } catch {
-    // already stopped or unavailable
-  }
+  // Native STT skipped — Whisper handles transcription
   removeSttListeners();
 }
 
@@ -168,17 +129,29 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
     return { simulated: true };
   }
 
-  await ensureNativeAudio();
-
-  await requestPermissions();
-  await setAudioMode({
-    allowsRecording: true,
-    playsInSilentMode: true,
-  });
-
-  recorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
-  await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
-  recorder.record();
+  // Use PcmRecorder for native recording (produces valid WAV for whisper.rn)
+  try {
+    const { PcmRecorder } = await import("../../modules/pcm-recorder/src");
+    const hasPerm = PcmRecorder.hasPermission();
+    if (!hasPerm) {
+      // Request permission via expo-audio
+      await requestPermissions();
+    }
+    const status = await PcmRecorder.startRecording({
+      sampleRate: 16000,
+      enableMetering: false,
+    });
+    recorder = { pcmRecorder: PcmRecorder, filePath: status.filePath, simulated: false };
+  } catch (e: any) {
+    // Fallback to expo-audio if PcmRecorder fails
+    console.warn("[Recording] PcmRecorder failed, falling back to expo-audio:", e?.message);
+    await ensureNativeAudio();
+    await requestPermissions();
+    await setAudioMode({ allowsRecording: true, playsInSilentMode: true });
+    recorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+    await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+    recorder.record();
+  }
 
   // Start speech recognition (non-blocking — recording proceeds either way)
   startNativeSTT();
@@ -186,7 +159,7 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
   return { simulated: false };
 }
 
-export async function stopRecording(): Promise<{ uri: string; durationMs: number; transcript: string; simulated: boolean }> {
+export async function stopRecording(elapsedSeconds?: number): Promise<{ uri: string; durationMs: number; transcript: string; simulated: boolean }> {
   if (!recorder) throw new Error("No active recording");
 
   if (Platform.OS === "web" && recorder.simulated) {
@@ -212,24 +185,59 @@ export async function stopRecording(): Promise<{ uri: string; durationMs: number
   }
 
   await stopNativeSTT();
+
+  // Handle PcmRecorder (native WAV recording)
+  if (recorder?.pcmRecorder) {
+    const status = await recorder.pcmRecorder.stopRecording();
+    const uri = status.filePath ?? "";
+    const durationMs = elapsedSeconds ? elapsedSeconds * 1000 : status.durationMs;
+    let capturedTranscript = transcript;
+    recorder = null;
+
+    // Try Whisper transcription
+    if (!capturedTranscript && uri) {
+      try {
+        const { transcribeWithWhisper } = await import("./whisper");
+        sttStatus = "active";
+        sttError = null;
+        capturedTranscript = await transcribeWithWhisper(uri);
+        transcript = capturedTranscript;
+      } catch (e: any) {
+        sttStatus = "error";
+        sttError = `Whisper failed: ${e?.message ?? "unknown"}`;
+      }
+    }
+
+    return { uri, durationMs, transcript: capturedTranscript, simulated: false };
+  }
+
+  // Fallback to expo-audio
   await recorder.stop();
   const uri = recorder.uri ?? "";
-  const durationMs = (recorder.currentTime ?? 0) * 1000;
+  const durationMs = elapsedSeconds ? elapsedSeconds * 1000 : 0;
   let capturedTranscript = transcript;
   recorder = null;
 
   // Fallback: if native STT got no transcript, try Whisper
   if (!capturedTranscript && uri) {
+    console.log("[Recording] No transcript, trying Whisper...");
     try {
       const { transcribeWithWhisper } = await import("./whisper");
       sttStatus = "active";
       sttError = null;
+      console.log("[Recording] Calling whisper with uri:", uri);
       capturedTranscript = await transcribeWithWhisper(uri);
+      console.log("[Recording] Whisper result length:", capturedTranscript?.length);
       transcript = capturedTranscript;
     } catch (e: any) {
+      console.error("[Recording] Whisper failed:", e?.message);
       sttStatus = "error";
       sttError = `Whisper failed: ${e?.message ?? "unknown"}`;
     }
+  } else if (capturedTranscript) {
+    console.log("[Recording] Already have transcript from native STT");
+  } else {
+    console.log("[Recording] No uri, skipping whisper");
   }
 
   return { uri, durationMs, transcript: capturedTranscript, simulated: false };
@@ -252,8 +260,7 @@ export async function pauseRecording(): Promise<void> {
     }
     return;
   }
-  recorder.pause();
-  try { if (sttModule) await sttModule.stopListening(); } catch {}
+  await recorder.pause();
 }
 
 export async function resumeRecording(): Promise<void> {
@@ -270,22 +277,6 @@ export async function resumeRecording(): Promise<void> {
     return;
   }
   recorder.record();
-  try {
-    if (sttModule) {
-      removeSttListeners();
-      sttPartialSub = sttModule.addEventListener("onSpeechPartialResults", (event: any) => {
-        if (event?.value && typeof event.value === "string") {
-          transcript = event.value;
-        }
-      });
-      sttFinalSub = sttModule.addEventListener("onSpeechResults", (event: any) => {
-        if (event?.value && typeof event.value === "string") {
-          transcript = event.value;
-        }
-      });
-      await sttModule.startListening();
-    }
-  } catch {}
 }
 
 export function isRecordingActive(): boolean {

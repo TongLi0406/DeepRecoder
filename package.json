@@ -8,6 +8,7 @@
     "@react-navigation/native-stack": "^7.17.5",
     "buffer": "^6.0.3",
     "expo": "~56.0.12",
+    "expo-asset": "~56.0.17",
     "expo-audio": "~56.0.12",
     "expo-file-system": "~56.0.8",
     "expo-print": "~56.0.4",
@@ -25,7 +26,10 @@
     "whisper.rn": "^0.6.0"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.2.2",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.11",
     "typescript": "~6.0.3"
   },
   "scripts": {

@@ -155,6 +155,11 @@ export default function SummaryScreen() {
   const [processing, setProcessing] = useState(!initialSession.summary);
   const [error, setError] = useState<string | null>(null);
   const [speakerTranscript, setSpeakerTranscript] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<string[]>([]);
+
+  const addDebug = (msg: string) => {
+    setDebugInfo(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  };
 
   useEffect(() => {
     if (initialSession.summary) return;
@@ -165,8 +170,38 @@ export default function SummaryScreen() {
         setProcessing(true);
         const transcript = initialSession.transcript || "";
 
+        addDebug(`Session ID: ${initialSession.id}`);
+        addDebug(`Mode: ${initialSession.mode}`);
+        addDebug(`Audio URI: ${initialSession.audioUri || "empty"}`);
+        addDebug(`Audio Duration: ${initialSession.audioDuration}ms`);
+        addDebug(`Has transcript: ${!!transcript} (${transcript.length} chars)`);
+
+        if (!transcript) {
+          addDebug("No transcript available - trying Whisper...");
+          try {
+            const { transcribeWithWhisper, isWhisperAvailable } = await import("../services/whisper");
+            addDebug(`Whisper available: ${isWhisperAvailable()}`);
+
+            if (isWhisperAvailable() && initialSession.audioUri) {
+              addDebug("Calling Whisper transcribe...");
+              const whisperResult = await transcribeWithWhisper(initialSession.audioUri);
+              addDebug(`Whisper result: ${whisperResult?.length || 0} chars`);
+              if (whisperResult) {
+                (initialSession as any).transcript = whisperResult;
+              }
+            } else {
+              addDebug("Whisper not available or no audio URI");
+            }
+          } catch (whisperErr: any) {
+            addDebug(`Whisper error: ${whisperErr?.message}`);
+          }
+        }
+
+        const finalTranscript = (initialSession as any).transcript || "";
+        addDebug(`Final transcript: ${finalTranscript.length} chars`);
+
         const result = await summarize(
-          transcript,
+          finalTranscript,
           initialSession.mode,
           initialSession.createdAt,
           initialSession.endTime || new Date().toISOString(),
@@ -258,10 +293,19 @@ export default function SummaryScreen() {
           <View style={styles.warningCard}>
             <Text style={styles.warningTitle}>No transcript captured</Text>
             <Text style={styles.warningText}>
-              On-device speech recognition is new in this build. Make sure Google
-              speech services are available on your device. If the issue persists,
-              the microphone may not have picked up audio.
+              Whisper transcription may have failed. Check that the audio file
+              exists and try again. The recording was saved but no text was
+              extracted.
             </Text>
+          </View>
+        )}
+
+        {debugInfo.length > 0 && (
+          <View style={styles.debugCard}>
+            <Text style={styles.debugTitle}>Debug Info</Text>
+            {debugInfo.map((line, i) => (
+              <Text key={i} style={styles.debugText}>{line}</Text>
+            ))}
           </View>
         )}
 
@@ -396,4 +440,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   doneButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+  debugCard: {
+    backgroundColor: "#E8F0FE",
+    borderRadius: 10,
+    padding: 14,
+    marginTop: 16,
+  },
+  debugTitle: { fontSize: 14, fontWeight: "600", color: "#1A73E8", marginBottom: 8 },
+  debugText: { fontSize: 11, color: "#3C4043", fontFamily: "monospace", lineHeight: 16 },
 });

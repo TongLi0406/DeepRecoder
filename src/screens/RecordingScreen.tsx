@@ -54,6 +54,10 @@ export default function RecordingScreen() {
   const recordingRef = useRef(false);
   const pausedRef = useRef(false);
   const startTimeRef = useRef<string | null>(null);
+  const elapsedRef = useRef(0);
+
+  // Keep elapsedRef in sync
+  useEffect(() => { elapsedRef.current = elapsed; }, [elapsed]);
 
   // Timer
   useEffect(() => {
@@ -141,7 +145,7 @@ export default function RecordingScreen() {
     setError(null);
     try {
       recordingRef.current = false;
-      const { uri, durationMs, transcript: recTranscript } = await stopRecording();
+      const { uri, durationMs, transcript: recTranscript } = await stopRecording(elapsedRef.current);
       setRecording(false);
 
       const now = new Date().toISOString();
@@ -203,18 +207,10 @@ export default function RecordingScreen() {
         </View>
       )}
 
-      {!simulated && sttInfo.status === "unavailable" && (
-        <View style={styles.sttBanner}>
-          <Text style={styles.sttBannerText}>
-            STT unavailable — no transcript will be captured
-          </Text>
-        </View>
-      )}
-
-      {!simulated && sttInfo.status === "error" && (
-        <View style={styles.sttBannerError}>
-          <Text style={styles.sttBannerText}>
-            STT error: {sttInfo.error}
+      {!simulated && sttInfo.status === "whisper_pending" && (
+        <View style={styles.sttBannerActive}>
+          <Text style={styles.sttBannerTextActive}>
+            Whisper will transcribe after recording stops
           </Text>
         </View>
       )}
