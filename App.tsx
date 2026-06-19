@@ -10,6 +10,7 @@ import { initSkillsTable } from "./src/services/skills";
 import { initEmbeddingsTable } from "./src/services/vectorStore";
 import { initQueueTable, drainQueue } from "./src/services/offlineQueue";
 import { recoverInterruptedSessions } from "./src/services/recovery";
+import { resumeStuckTasks } from "./src/services/processingQueue";
 import { markAppStart, markAppReady } from "./src/services/perf";
 
 export type RootStackParamList = {
@@ -34,6 +35,9 @@ export default function App() {
 
       // Recover interrupted work from previous session
       await recoverInterruptedSessions();
+
+      // Resume any stuck processing tasks (STT/LLM)
+      resumeStuckTasks().catch(() => {});
 
       // Attempt to drain any pending offline jobs
       drainQueue().catch(() => {});

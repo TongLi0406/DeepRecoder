@@ -1,6 +1,6 @@
 import { callLLM } from "./api";
+import { generateEmbedding } from "./embedding";
 import {
-  generateEmbedding,
   vectorSearch,
   keywordSearch,
   getAllEmbeddings,
@@ -14,7 +14,6 @@ import type { Session } from "../types";
 export async function hybridSearch(
   query: string,
   topK = 5,
-  apiKey?: string,
 ): Promise<SearchResult[]> {
   const allEmb = await getAllEmbeddings();
 
@@ -23,7 +22,7 @@ export async function hybridSearch(
   // Run semantic and keyword search in parallel
   const [semanticResults, keywordResults] = await Promise.all([
     (async () => {
-      const qEmb = await generateEmbedding(query, apiKey);
+      const qEmb = await generateEmbedding(query);
       return vectorSearch(qEmb, topK * 2);
     })(),
     Promise.resolve(keywordSearch(allEmb, query).slice(0, topK * 2)),
@@ -73,7 +72,7 @@ export async function askAgent(
   apiKey?: string,
 ): Promise<AgentResponse> {
   // Step 1: Hybrid search for relevant content
-  const results = await hybridSearch(question, 5, apiKey);
+  const results = await hybridSearch(question, 5);
 
   if (results.length === 0) {
     return {

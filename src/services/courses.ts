@@ -1,5 +1,6 @@
 import { callLLM } from "./api";
-import { generateEmbedding, getAllEmbeddings, cosineSim } from "./vectorStore";
+import { generateEmbedding } from "./embedding";
+import { getAllEmbeddings, cosineSim } from "./vectorStore";
 
 // ─── Course Label Extraction ───
 
@@ -41,21 +42,20 @@ export async function extractCourseName(
 
 export async function findOrCreateCourse(
   candidateName: string,
-  apiKey?: string,
 ): Promise<string> {
   const allEmb = await getAllEmbeddings();
   const courseEmb = allEmb.filter((e) => e.contentType === "course_label");
 
   if (courseEmb.length === 0) {
     // First course — create it
-    const emb = await generateEmbedding(candidateName, apiKey);
+    const emb = await generateEmbedding(candidateName);
     // Store as a special embedding (we'd need a dedicated table in production,
     // but for now we just return the name as-is)
     return candidateName;
   }
 
   // Compare against existing courses
-  const candidateEmb = await generateEmbedding(candidateName, apiKey);
+  const candidateEmb = await generateEmbedding(candidateName);
   let bestMatch: { name: string; similarity: number } | null = null;
 
   for (const existing of courseEmb) {

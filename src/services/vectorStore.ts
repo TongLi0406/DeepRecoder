@@ -1,5 +1,5 @@
 import { Platform } from "react-native";
-import { callLLM } from "./api";
+import { generateEmbedding } from "./embedding";
 
 // ─── In-Memory Store (Web) ───
 
@@ -48,22 +48,6 @@ export interface EmbeddingRow {
 export interface SearchResult {
   embeddingRow: EmbeddingRow;
   similarity: number;
-}
-
-// ─── Embedding Generation ───
-
-const EMBEDDING_SYSTEM = "将文本编码为数字列表。只返回 JSON 数组格式的数字，不要其他内容。128 维。";
-
-export async function generateEmbedding(text: string, apiKey?: string): Promise<number[]> {
-  const raw = await callLLM(
-    EMBEDDING_SYSTEM,
-    `将以下文本编码为128维嵌入向量，只返回JSON数字数组：\n\n${text}`,
-    apiKey,
-    1024,
-  );
-  const match = raw.match(/\[[\d\s,.\-e+]+\]/);
-  if (!match) throw new Error("Could not parse embedding from LLM response");
-  return JSON.parse(match[0]);
 }
 
 // ─── CRUD ───
@@ -144,7 +128,7 @@ export async function vectorSearch(queryEmbedding: number[], topK = 10): Promise
 
 // ─── Index Session ───
 
-export async function indexSessionSummaries(sessionId: string, summary: any, apiKey?: string): Promise<void> {
+export async function indexSessionSummaries(sessionId: string, summary: any): Promise<void> {
   const items: { type: string; text: string }[] = [];
   if (summary.knowledgePoints) {
     for (const kp of summary.knowledgePoints) {
@@ -169,7 +153,7 @@ export async function indexSessionSummaries(sessionId: string, summary: any, api
 
   for (const item of items) {
     try {
-      const emb = await generateEmbedding(item.text, apiKey);
+      const emb = await generateEmbedding(item.text);
       await insertEmbedding(sessionId, item.type, item.text, emb);
     } catch { /* skip failed embeddings */ }
   }

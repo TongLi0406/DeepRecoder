@@ -191,56 +191,17 @@ export async function stopRecording(elapsedSeconds?: number): Promise<{ uri: str
     const status = await recorder.pcmRecorder.stopRecording();
     const uri = status.filePath ?? "";
     const durationMs = elapsedSeconds ? elapsedSeconds * 1000 : status.durationMs;
-    let capturedTranscript = transcript;
     recorder = null;
-
-    // Try Whisper transcription
-    if (!capturedTranscript && uri) {
-      try {
-        const { transcribeWithWhisper } = await import("./whisper");
-        sttStatus = "active";
-        sttError = null;
-        capturedTranscript = await transcribeWithWhisper(uri);
-        transcript = capturedTranscript;
-      } catch (e: any) {
-        sttStatus = "error";
-        sttError = `Whisper failed: ${e?.message ?? "unknown"}`;
-      }
-    }
-
-    return { uri, durationMs, transcript: capturedTranscript, simulated: false };
+    return { uri, durationMs, transcript: "", simulated: false };
   }
 
   // Fallback to expo-audio
   await recorder.stop();
   const uri = recorder.uri ?? "";
   const durationMs = elapsedSeconds ? elapsedSeconds * 1000 : 0;
-  let capturedTranscript = transcript;
   recorder = null;
 
-  // Fallback: if native STT got no transcript, try Whisper
-  if (!capturedTranscript && uri) {
-    console.log("[Recording] No transcript, trying Whisper...");
-    try {
-      const { transcribeWithWhisper } = await import("./whisper");
-      sttStatus = "active";
-      sttError = null;
-      console.log("[Recording] Calling whisper with uri:", uri);
-      capturedTranscript = await transcribeWithWhisper(uri);
-      console.log("[Recording] Whisper result length:", capturedTranscript?.length);
-      transcript = capturedTranscript;
-    } catch (e: any) {
-      console.error("[Recording] Whisper failed:", e?.message);
-      sttStatus = "error";
-      sttError = `Whisper failed: ${e?.message ?? "unknown"}`;
-    }
-  } else if (capturedTranscript) {
-    console.log("[Recording] Already have transcript from native STT");
-  } else {
-    console.log("[Recording] No uri, skipping whisper");
-  }
-
-  return { uri, durationMs, transcript: capturedTranscript, simulated: false };
+  return { uri, durationMs, transcript: "", simulated: false };
 }
 
 export function getCurrentTranscript(): string {

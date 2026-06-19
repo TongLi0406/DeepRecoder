@@ -10,6 +10,12 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { getApiKey, saveApiKey, deleteApiKey, testConnection } from "../services/api";
+import {
+  getSiliconFlowKey,
+  saveSiliconFlowKey,
+  deleteSiliconFlowKey,
+  testSiliconFlowConnection,
+} from "../services/embedding";
 
 export default function SettingsScreen() {
   const [apiKey, setApiKey] = useState("");
@@ -18,11 +24,23 @@ export default function SettingsScreen() {
   const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState<"unknown" | "valid" | "invalid">("unknown");
 
+  const [sfKey, setSfKey] = useState("");
+  const [sfShowKey, setSfShowKey] = useState(false);
+  const [sfHasKey, setSfHasKey] = useState(false);
+  const [sfTesting, setSfTesting] = useState(false);
+  const [sfStatus, setSfStatus] = useState<"unknown" | "valid" | "invalid">("unknown");
+
   useEffect(() => {
     getApiKey().then((key) => {
       if (key) {
         setApiKey(key);
         setHasKey(true);
+      }
+    });
+    getSiliconFlowKey().then((key) => {
+      if (key) {
+        setSfKey(key);
+        setSfHasKey(true);
       }
     });
   }, []);
@@ -62,6 +80,43 @@ export default function SettingsScreen() {
     setHasKey(false);
     setStatus("unknown");
     Alert.alert("Removed", "API key removed from device");
+  }, []);
+
+  const handleSfSave = useCallback(async () => {
+    if (!sfKey.trim()) {
+      Alert.alert("Error", "Please enter a SiliconFlow API key");
+      return;
+    }
+    await saveSiliconFlowKey(sfKey.trim());
+    setSfHasKey(true);
+    setSfStatus("unknown");
+    Alert.alert("Saved", "SiliconFlow API key saved securely on-device");
+  }, [sfKey]);
+
+  const handleSfTest = useCallback(async () => {
+    setSfTesting(true);
+    setSfStatus("unknown");
+    try {
+      const ok = await testSiliconFlowConnection(sfKey.trim());
+      setSfStatus(ok ? "valid" : "invalid");
+      Alert.alert(
+        ok ? "Connected" : "Failed",
+        ok ? "SiliconFlow connection successful" : "Could not connect. Check your key and network.",
+      );
+    } catch {
+      setSfStatus("invalid");
+      Alert.alert("Error", "Connection test failed");
+    } finally {
+      setSfTesting(false);
+    }
+  }, [sfKey]);
+
+  const handleSfDelete = useCallback(async () => {
+    await deleteSiliconFlowKey();
+    setSfKey("");
+    setSfHasKey(false);
+    setSfStatus("unknown");
+    Alert.alert("Removed", "SiliconFlow API key removed from device");
   }, []);
 
   return (
@@ -131,6 +186,74 @@ export default function SettingsScreen() {
 
       {hasKey && (
         <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
+          <Text style={styles.deleteButtonText}>Remove Key</Text>
+        </TouchableOpacity>
+      )}
+
+      <Text style={[styles.sectionTitle, { marginTop: 16 }]}>SiliconFlow API Key</Text>
+      <Text style={styles.sectionDesc}>
+        Used for generating high-quality embeddings (BAAI/bge-large-zh-v1.5) for
+        the RAG knowledge base. If not configured, DeepSeek LLM will be used as
+        fallback with lower quality.
+      </Text>
+
+      <View style={styles.inputRow}>
+        <TextInput
+          style={styles.input}
+          placeholder="sk-..."
+          placeholderTextColor="#9AA0A6"
+          value={sfKey}
+          onChangeText={setSfKey}
+          secureTextEntry={!sfShowKey}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <TouchableOpacity
+          style={styles.showButton}
+          onPress={() => setSfShowKey((v) => !v)}
+        >
+          <Text style={styles.showButtonText}>{sfShowKey ? "Hide" : "Show"}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {sfStatus !== "unknown" && (
+        <View
+          style={[
+            styles.statusBadge,
+            sfStatus === "valid" ? styles.statusValid : styles.statusInvalid,
+          ]}
+        >
+          <Text
+            style={[
+              styles.statusText,
+              sfStatus === "valid" ? styles.statusTextValid : styles.statusTextInvalid,
+            ]}
+          >
+            {sfStatus === "valid" ? "Connection OK" : "Connection Failed"}
+          </Text>
+        </View>
+      )}
+
+      <View style={styles.buttonRow}>
+        <TouchableOpacity style={styles.saveButton} onPress={handleSfSave}>
+          <Text style={styles.saveButtonText}>Save</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.testButton, sfTesting && styles.testButtonDisabled]}
+          onPress={handleSfTest}
+          disabled={sfTesting}
+        >
+          {sfTesting ? (
+            <ActivityIndicator size="small" color="#1A73E8" />
+          ) : (
+            <Text style={styles.testButtonText}>Test Connection</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {sfHasKey && (
+        <TouchableOpacity style={styles.deleteButton} onPress={handleSfDelete}>
           <Text style={styles.deleteButtonText}>Remove Key</Text>
         </TouchableOpacity>
       )}

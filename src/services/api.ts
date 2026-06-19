@@ -98,10 +98,17 @@ export async function callLLM(
   }
 
   const data = await res.json();
+
+  // Anthropic-compatible format: data.content[0].text
   for (const block of data.content ?? []) {
     if (block.type === "text") return block.text;
   }
-  throw new Error("No text block in API response");
+
+  // OpenAI-compatible format: data.choices[0].message.content
+  const openaiText = data.choices?.[0]?.message?.content;
+  if (openaiText) return openaiText;
+
+  throw new Error(`Unexpected API response: ${JSON.stringify(data).slice(0, 500)}`);
 }
 
 // ─── Test Connection ───

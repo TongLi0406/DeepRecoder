@@ -2,7 +2,7 @@
 
 export type SessionMode = "meeting-organizer" | "meeting-attendee" | "classroom-student" | "classroom-teacher";
 
-export type SessionPhase = "recording" | "transcribing" | "summarizing" | "done" | "failed";
+export type SessionPhase = "recording" | "transcribing" | "summarizing" | "indexing" | "done" | "failed";
 
 export interface KnowledgePoint {
   id: string;
@@ -106,6 +106,7 @@ export interface Session {
   transcript?: string;
   summary?: StudentSummary | TeacherSummary | MeetingSummary;
   courseName?: string;
+  embeddingMethod?: string;
   error?: string;
 }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -6,14 +6,15 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../App";
 import type { StudentSummary, TeacherSummary, MeetingSummary } from "../types";
-import { summarize } from "../services/summarization";
-import { updateSessionSummary } from "../services/storage";
+import { getSessionById } from "../services/storage";
+import { startProcessing, abortProcessing, getQueueState, addQueueListener } from "../services/processingQueue";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Summary">;
 type Route = RouteProp<RootStackParamList, "Summary">;
@@ -152,92 +153,82 @@ export default function SummaryScreen() {
   const { session: initialSession } = route.params;
 
   const [session, setSession] = useState(initialSession);
-  const [processing, setProcessing] = useState(!initialSession.summary);
-  const [error, setError] = useState<string | null>(null);
-  const [speakerTranscript, setSpeakerTranscript] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const addDebug = (msg: string) => {
     setDebugInfo(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
+  const isDone = session.phase === "done";
+  const isFailed = session.phase === "failed";
+  const processing = !isDone && !isFailed;
+  const processingStage = session.phase as string;
+
+  // Start processing and poll for updates
   useEffect(() => {
-    if (initialSession.summary) return;
+    if (isDone || isFailed) return;
 
-    let cancelled = false;
-    async function process() {
-      try {
-        setProcessing(true);
-        const transcript = initialSession.transcript || "";
+    addDebug(`Queue: starting processing for ${initialSession.id}`);
+    startProcessing(initialSession.id);
 
-        addDebug(`Session ID: ${initialSession.id}`);
-        addDebug(`Mode: ${initialSession.mode}`);
-        addDebug(`Audio URI: ${initialSession.audioUri || "empty"}`);
-        addDebug(`Audio Duration: ${initialSession.audioDuration}ms`);
-        addDebug(`Has transcript: ${!!transcript} (${transcript.length} chars)`);
-
-        if (!transcript) {
-          addDebug("No transcript available - trying Whisper...");
-          try {
-            const { transcribeWithWhisper, isWhisperAvailable } = await import("../services/whisper");
-            addDebug(`Whisper available: ${isWhisperAvailable()}`);
-
-            if (isWhisperAvailable() && initialSession.audioUri) {
-              addDebug("Calling Whisper transcribe...");
-              const whisperResult = await transcribeWithWhisper(initialSession.audioUri);
-              addDebug(`Whisper result: ${whisperResult?.length || 0} chars`);
-              if (whisperResult) {
-                (initialSession as any).transcript = whisperResult;
-              }
-            } else {
-              addDebug("Whisper not available or no audio URI");
-            }
-          } catch (whisperErr: any) {
-            addDebug(`Whisper error: ${whisperErr?.message}`);
-          }
+    // Poll session from DB every second while processing
+    const poll = async () => {
+      const updated = await getSessionById(initialSession.id);
+      if (updated) {
+        setSession(updated);
+        if (updated.phase === "done" || updated.phase === "failed") {
+          addDebug(`Queue: ${updated.phase}`);
         }
-
-        const finalTranscript = (initialSession as any).transcript || "";
-        addDebug(`Final transcript: ${finalTranscript.length} chars`);
-
-        const result = await summarize(
-          finalTranscript,
-          initialSession.mode,
-          initialSession.createdAt,
-          initialSession.endTime || new Date().toISOString(),
-        );
-
-        if (cancelled) return;
-
-        const updatedSession = {
-          ...initialSession,
-          title: result.title,
-          courseName: result.courseName,
-          transcript: result.speakerLabeledTranscript || transcript,
-          summary: result.summary,
-          phase: "done" as const,
-        };
-
-        setSpeakerTranscript(result.speakerLabeledTranscript);
-        setSession(updatedSession);
-        setProcessing(false);
-
-        await updateSessionSummary(
-          updatedSession.id,
-          updatedSession.summary,
-          updatedSession.courseName,
-          updatedSession.title,
-          updatedSession.endTime,
-        );
-      } catch (e: any) {
-        if (cancelled) return;
-        setError(e.message || "Summarization failed");
-        setProcessing(false);
       }
-    }
-    process();
-    return () => { cancelled = true; };
+    };
+
+    pollRef.current = setInterval(poll, 1000);
+
+    // Listen for queue events (faster than polling)
+    const unsub = addQueueListener(async () => {
+      const updated = await getSessionById(initialSession.id);
+      if (updated) setSession(updated);
+    });
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      unsub();
+    };
   }, [initialSession.id]);
+
+  const handleDone = () => {
+    if (processing) {
+      const { running, sessionId } = getQueueState();
+      const isThisSession = running && sessionId === initialSession.id;
+
+      Alert.alert(
+        "Processing in progress",
+        isThisSession
+          ? "Transcription or analysis is still running. You can leave — processing will continue in the background."
+          : "Processing is still running.",
+        [
+          { text: "Wait", style: "cancel" },
+          {
+            text: isThisSession ? "Leave (background)" : "Leave",
+            style: isThisSession ? "default" : "destructive",
+            onPress: () => navigation.popToTop(),
+          },
+          ...(isThisSession
+            ? [{
+                text: "Abort & Leave",
+                style: "destructive" as const,
+                onPress: () => {
+                  abortProcessing().finally(() => navigation.popToTop());
+                },
+              }]
+            : []),
+        ],
+      );
+    } else {
+      navigation.popToTop();
+    }
+  };
 
   const summary = session.summary;
   const displayTitle =
@@ -264,24 +255,132 @@ export default function SummaryScreen() {
 
         {processing && (
           <View style={styles.processing}>
-            <ActivityIndicator size="large" color="#1A73E8" />
-            <Text style={styles.processingText}>Processing...</Text>
-            <Text style={styles.processingHint}>
-              Transcribing and analyzing your recording
-            </Text>
+            <Text style={styles.processingTitle}>Processing Recording</Text>
+
+            <View style={styles.stagesContainer}>
+              {/* Stage 1: STT */}
+              <View style={styles.stageRow}>
+                <View style={[
+                  styles.stageIndicator,
+                  processingStage === "transcribing" && styles.stageActive,
+                  (processingStage === "summarizing" || processingStage === "indexing" || processingStage === "done") && styles.stageDone,
+                ]}>
+                  {processingStage === "transcribing" ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : processingStage === "summarizing" || processingStage === "indexing" || processingStage === "done" ? (
+                    <Text style={styles.checkmark}>✓</Text>
+                  ) : (
+                    <Text style={styles.stageNum}>1</Text>
+                  )}
+                </View>
+                <View style={styles.stageTextCol}>
+                  <Text style={[
+                    styles.stageTitle,
+                    processingStage === "transcribing" && styles.stageTitleActive,
+                  ]}>
+                    Speech to Text
+                  </Text>
+                  <Text style={styles.stageHint}>
+                    {processingStage === "transcribing"
+                      ? "Converting audio to text via Whisper..."
+                      : "Transcription complete"}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Connector line */}
+              <View style={[
+                styles.connector,
+                (processingStage === "summarizing" || processingStage === "indexing" || processingStage === "done") && styles.connectorDone,
+              ]} />
+
+              {/* Stage 2: LLM */}
+              <View style={styles.stageRow}>
+                <View style={[
+                  styles.stageIndicator,
+                  processingStage === "summarizing" && styles.stageActive,
+                  (processingStage === "indexing" || processingStage === "done") && styles.stageDone,
+                ]}>
+                  {processingStage === "summarizing" ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : processingStage === "indexing" || processingStage === "done" ? (
+                    <Text style={styles.checkmark}>✓</Text>
+                  ) : (
+                    <Text style={styles.stageNum}>2</Text>
+                  )}
+                </View>
+                <View style={styles.stageTextCol}>
+                  <Text style={[
+                    styles.stageTitle,
+                    processingStage === "summarizing" && styles.stageTitleActive,
+                  ]}>
+                    AI Summarization
+                  </Text>
+                  <Text style={styles.stageHint}>
+                    {processingStage === "transcribing"
+                      ? "Waiting for transcription..."
+                      : processingStage === "summarizing"
+                        ? "Analyzing with DeepSeek LLM..."
+                        : "Summary complete"}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Connector line */}
+              <View style={[
+                styles.connector,
+                (processingStage === "indexing" || processingStage === "done") && styles.connectorDone,
+              ]} />
+
+              {/* Stage 3: Vector Indexing */}
+              <View style={styles.stageRow}>
+                <View style={[
+                  styles.stageIndicator,
+                  processingStage === "indexing" && styles.stageActive,
+                  processingStage === "done" && styles.stageDone,
+                ]}>
+                  {processingStage === "indexing" ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : processingStage === "done" ? (
+                    <Text style={styles.checkmark}>✓</Text>
+                  ) : (
+                    <Text style={styles.stageNum}>3</Text>
+                  )}
+                </View>
+                <View style={styles.stageTextCol}>
+                  <Text style={[
+                    styles.stageTitle,
+                    processingStage === "indexing" && styles.stageTitleActive,
+                  ]}>
+                    Vector Indexing
+                  </Text>
+                  <Text style={styles.stageHint}>
+                    {processingStage === "transcribing" || processingStage === "summarizing"
+                      ? "Waiting for summary..."
+                      : processingStage === "indexing"
+                        ? "Generating embeddings for RAG knowledge base..."
+                        : processingStage === "done" && session.embeddingMethod
+                          ? `Indexed with ${session.embeddingMethod}`
+                          : processingStage === "done"
+                            ? "Indexing complete"
+                            : "Index knowledge base for RAG search"}
+                  </Text>
+                </View>
+              </View>
+            </View>
           </View>
         )}
 
-        {error && (
+        {isFailed && (
           <View style={styles.errorCard}>
             <Text style={styles.errorTitle}>Processing Error</Text>
-            <Text style={styles.errorText}>{error}</Text>
-            {initialSession.transcript && (
+            <Text style={styles.errorText}>{session.error || "Unknown error"}</Text>
+            {session.transcript && (
               <>
                 <Text style={styles.section}>Raw Transcript</Text>
                 <View style={styles.card}>
                   <Text style={styles.transcriptText}>
-                    {initialSession.transcript}
+                    {session.transcript}
                   </Text>
                 </View>
               </>
@@ -289,7 +388,7 @@ export default function SummaryScreen() {
           </View>
         )}
 
-        {!processing && !error && !initialSession.transcript && (
+        {!processing && !isFailed && !session.transcript && (
           <View style={styles.warningCard}>
             <Text style={styles.warningTitle}>No transcript captured</Text>
             <Text style={styles.warningText}>
@@ -309,12 +408,12 @@ export default function SummaryScreen() {
           </View>
         )}
 
-        {speakerTranscript && (
+        {session.transcript && !summary && (
           <>
             <Text style={styles.section}>Transcript</Text>
             <View style={styles.transcriptCard}>
               <Text style={styles.transcriptText}>
-                {speakerTranscript}
+                {session.transcript}
               </Text>
             </View>
           </>
@@ -337,7 +436,7 @@ export default function SummaryScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.doneButton}
-          onPress={() => navigation.popToTop()}
+          onPress={handleDone}
         >
           <Text style={styles.doneButtonText}>Done</Text>
         </TouchableOpacity>
@@ -388,9 +487,34 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   headerText: { fontSize: 15, color: "#1A73E8", fontWeight: "500" },
-  processing: { alignItems: "center", marginTop: 80 },
-  processingText: { fontSize: 18, fontWeight: "600", color: "#1A1A1A", marginTop: 16 },
-  processingHint: { fontSize: 13, color: "#5F6368", marginTop: 8 },
+  processing: { alignItems: "center", marginTop: 60 },
+  processingTitle: { fontSize: 18, fontWeight: "600", color: "#1A1A1A", marginBottom: 32 },
+  stagesContainer: { width: "100%", paddingHorizontal: 8 },
+  stageRow: { flexDirection: "row", alignItems: "center", gap: 14 },
+  stageIndicator: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#E8EAED",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  stageActive: { backgroundColor: "#1A73E8" },
+  stageDone: { backgroundColor: "#34A853" },
+  stageNum: { fontSize: 14, fontWeight: "600", color: "#5F6368" },
+  checkmark: { fontSize: 16, fontWeight: "700", color: "#FFFFFF" },
+  stageTextCol: { flex: 1 },
+  stageTitle: { fontSize: 15, fontWeight: "500", color: "#5F6368" },
+  stageTitleActive: { color: "#1A1A1A", fontWeight: "600" },
+  stageHint: { fontSize: 12, color: "#9AA0A6", marginTop: 2 },
+  connector: {
+    width: 2,
+    height: 20,
+    backgroundColor: "#E8EAED",
+    marginLeft: 15,
+    marginVertical: 4,
+  },
+  connectorDone: { backgroundColor: "#34A853" },
   errorCard: {
     backgroundColor: "#FCE8E6",
     borderRadius: 10,

@@ -39,9 +39,13 @@ async function getNativeDb(): Promise<any> {
         transcript TEXT,
         summary TEXT,
         course_name TEXT,
+        embedding_method TEXT,
         error TEXT
       );
     `);
+
+    // Migration: add embedding_method column if upgrading from older schema
+    try { await db.execAsync('ALTER TABLE sessions ADD COLUMN embedding_method TEXT'); } catch {}
   }
   return db;
 }
@@ -61,8 +65,8 @@ export async function insertSession(session: Session): Promise<void> {
   const d = await getNativeDb();
   await d.runAsync(
     `INSERT OR REPLACE INTO sessions
-     (id, created_at, end_time, title, mode, phase, audio_uri, audio_duration, transcript, summary, course_name, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, created_at, end_time, title, mode, phase, audio_uri, audio_duration, transcript, summary, course_name, embedding_method, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     session.id,
     session.createdAt,
     session.endTime ?? null,
@@ -74,6 +78,7 @@ export async function insertSession(session: Session): Promise<void> {
     session.transcript ?? null,
     session.summary ? JSON.stringify(session.summary) : null,
     session.courseName ?? null,
+    session.embeddingMethod ?? null,
     session.error ?? null,
   );
 }
@@ -121,15 +126,27 @@ export async function updateSessionSummary(
   if (Platform.OS === "web") {
     const sessions: Session[] = memoryStore.get("sessions") ?? [];
     const s = sessions.find((r) => r.id === id);
-    if (s) { s.summary = summary; s.courseName = courseName; s.title = title; s.endTime = endTime; s.phase = "done"; }
+    if (s) { s.summary = summary; s.courseName = courseName; s.title = title; s.endTime = endTime; }
     memoryStore.set("sessions", sessions);
     return;
   }
   const d = await getNativeDb();
   await d.runAsync(
-    `UPDATE sessions SET summary = ?, course_name = ?, title = ?, end_time = ?, phase = 'done' WHERE id = ?`,
+    `UPDATE sessions SET summary = ?, course_name = ?, title = ?, end_time = ? WHERE id = ?`,
     JSON.stringify(summary), courseName ?? null, title ?? null, endTime ?? null, id,
   );
+}
+
+export async function updateSessionEmbeddingMethod(id: string, method: string): Promise<void> {
+  if (Platform.OS === "web") {
+    const sessions: Session[] = memoryStore.get("sessions") ?? [];
+    const s = sessions.find((r) => r.id === id);
+    if (s) s.embeddingMethod = method;
+    memoryStore.set("sessions", sessions);
+    return;
+  }
+  const d = await getNativeDb();
+  await d.runAsync(`UPDATE sessions SET embedding_method = ? WHERE id = ?`, method, id);
 }
 
 export async function getAllSessions(): Promise<Session[]> {
@@ -176,6 +193,7 @@ function rowToSession(r: any): Session {
     transcript: r.transcript ?? undefined,
     summary: r.summary ? JSON.parse(r.summary) : undefined,
     courseName: r.course_name ?? undefined,
+    embeddingMethod: r.embedding_method ?? undefined,
     error: r.error ?? undefined,
   };
 }
