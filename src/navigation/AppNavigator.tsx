@@ -1,5 +1,6 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Text } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import HomeScreen from "../screens/HomeScreen";
 import HistoryScreen from "../screens/HistoryScreen";
 import SkillsScreen from "../screens/SkillsScreen";
@@ -24,6 +25,8 @@ function TabIcon({ label, focused }: { label: string; focused: boolean }) {
 }
 
 export default function AppNavigator() {
+  const insets = useSafeAreaInsets();
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -36,8 +39,8 @@ export default function AppNavigator() {
         tabBarStyle: {
           borderTopColor: "#E8EAED",
           backgroundColor: "#FFFFFF",
-          paddingBottom: 4,
-          height: 56,
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 4,
+          height: 56 + (insets.bottom > 0 ? insets.bottom : 0),
         },
         tabBarLabelStyle: {
           fontSize: 12,

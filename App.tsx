@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { StatusBar } from "expo-status-bar";
 import { NavigationContainer } from "@react-navigation/native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import AppNavigator from "./src/navigation/AppNavigator";
 import RecordingScreen from "./src/screens/RecordingScreen";
@@ -49,21 +50,23 @@ export default function App() {
   }, []);
 
   return (
-    <NavigationContainer>
-      <StatusBar style="auto" />
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Main" component={AppNavigator} />
-        <Stack.Screen
-          name="Recording"
-          component={RecordingScreen}
-          options={{ presentation: "fullScreenModal", animation: "slide_from_bottom" }}
-        />
-        <Stack.Screen
-          name="Summary"
-          component={SummaryScreen}
-          options={{ presentation: "fullScreenModal", animation: "slide_from_bottom" }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer>
+        <StatusBar style="auto" />
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Main" component={AppNavigator} />
+          <Stack.Screen
+            name="Recording"
+            component={RecordingScreen}
+            options={{ presentation: "fullScreenModal", animation: "slide_from_bottom" }}
+          />
+          <Stack.Screen
+            name="Summary"
+            component={SummaryScreen}
+            options={{ presentation: "fullScreenModal", animation: "slide_from_bottom" }}
+          />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }

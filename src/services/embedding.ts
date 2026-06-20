@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { debugLog } from "./debug";
 
 const SILICONFLOW_URL = "https://api.siliconflow.cn/v1/embeddings";
 const SF_KEY_STORAGE = "siliconflow_api_key";
@@ -117,30 +118,30 @@ export function getLastEmbeddingMethod(): string {
 
 export async function generateEmbedding(text: string): Promise<number[]> {
   const textPreview = text.slice(0, 50);
-  console.log(`[Embedding] Generating embedding for: "${textPreview}..."`);
+  debugLog(`[Embedding] Generating embedding for: "${textPreview}..."`);
 
   // Try SiliconFlow BGE first
   try {
-    console.log('[Embedding] Trying SiliconFlow BGE...');
+    debugLog('[Embedding] Trying SiliconFlow BGE...');
     const emb = await embedWithSiliconFlow(text);
     if (emb && emb.length > 0) {
       lastEmbeddingMethod = "SiliconFlow BGE";
-      console.log(`[Embedding] SiliconFlow BGE success: ${emb.length}-dim vector`);
+      debugLog(`[Embedding] SiliconFlow BGE success: ${emb.length}-dim vector`);
       return emb;
     }
   } catch (e: any) {
-    console.log(`[Embedding] SiliconFlow failed: ${e?.message || e}, falling back to DeepSeek`);
+    debugLog(`[Embedding] SiliconFlow failed: ${e?.message || e}, falling back to DeepSeek`);
   }
 
   // Fallback to DeepSeek LLM-based embedding
-  console.log('[Embedding] Using DeepSeek LLM fallback...');
+  debugLog('[Embedding] Using DeepSeek LLM fallback...');
   lastEmbeddingMethod = "DeepSeek LLM";
   try {
     const result = await embedWithDeepSeek(text);
-    console.log(`[Embedding] DeepSeek LLM success: ${result.length}-dim vector`);
+    debugLog(`[Embedding] DeepSeek LLM success: ${result.length}-dim vector`);
     return result;
   } catch (e: any) {
-    console.log(`[Embedding] DeepSeek fallback also failed: ${e?.message || e}`);
+    debugLog(`[Embedding] DeepSeek fallback also failed: ${e?.message || e}`);
     throw e;
   }
 }

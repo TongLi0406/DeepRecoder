@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { generateEmbedding } from "./embedding";
+import { debugLog } from "./debug";
 
 // ─── In-Memory Store (Web) ───
 
@@ -151,7 +152,7 @@ export async function indexSessionSummaries(sessionId: string, summary: any): Pr
     }
   }
 
-  console.log(`[VectorStore] Indexing ${items.length} items for session ${sessionId.slice(0, 8)}...`);
+  debugLog(`[VectorStore] Indexing ${items.length} items for session ${sessionId.slice(0, 8)}...`);
   let indexed = 0;
   let failed = 0;
   for (const item of items) {
@@ -161,10 +162,10 @@ export async function indexSessionSummaries(sessionId: string, summary: any): Pr
       indexed++;
     } catch (e: any) {
       failed++;
-      console.log(`[VectorStore] Failed to index ${item.type}: ${e?.message || e}`);
+      debugLog(`[VectorStore] Failed to index ${item.type}: ${e?.message || e}`);
     }
   }
-  console.log(`[VectorStore] Indexed ${indexed}/${items.length} items (${failed} failed)`);
+  debugLog(`[VectorStore] Indexed ${indexed}/${items.length} items (${failed} failed)`);
 }
 
 // ─── Keyword Search ───

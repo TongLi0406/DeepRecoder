@@ -1,5 +1,6 @@
 import { callLLM } from "./api";
 import { generateEmbedding } from "./embedding";
+import { debugLog } from "./debug";
 import {
   vectorSearch,
   keywordSearch,
@@ -22,7 +23,6 @@ export async function hybridSearch(
   topK = 5,
 ): Promise<SearchResult[]> {
   const allEmb = await getAllEmbeddings();
-  console.log(`[HybridSearch] Total embeddings in DB: ${allEmb.length}`);
 
   if (allEmb.length === 0) return [];
 
@@ -31,12 +31,12 @@ export async function hybridSearch(
     (async () => {
       const qEmb = await generateEmbedding(query);
       const results = await vectorSearch(qEmb, topK * 2);
-      console.log(`[HybridSearch] Semantic results: ${results.length} (top similarity: ${results[0]?.similarity?.toFixed(3) ?? 'N/A'})`);
+      debugLog(`[HybridSearch] Semantic results: ${results.length} (top similarity: ${results[0]?.similarity?.toFixed(3) ?? 'N/A'})`);
       return results;
     })(),
     (async () => {
       const results = keywordSearch(allEmb, query).slice(0, topK * 2);
-      console.log(`[HybridSearch] Keyword results: ${results.length} (top score: ${results[0]?.similarity?.toFixed(3) ?? 'N/A'})`);
+      debugLog(`[HybridSearch] Keyword results: ${results.length} (top score: ${results[0]?.similarity?.toFixed(3) ?? 'N/A'})`);
       return results;
     })(),
   ]);
@@ -127,8 +127,8 @@ export async function askAgent(
     searchSkillsByEmbedding(qEmb, 10),
   ]);
 
-  console.log(`[RAG] Searching for: "${question}"`);
-  console.log(`[RAG] Found ${ragResults.length} RAG results, ${skillResults.length} skills`);
+  debugLog(`[RAG] Searching for: "${question}"`);
+  debugLog(`[RAG] Found ${ragResults.length} RAG results, ${skillResults.length} skills`);
 
   // Step 3: Select best display group for skills
   let matchedSkillGroup: MatchedSkillGroup | undefined;
@@ -161,7 +161,7 @@ export async function askAgent(
         group: bestGroup.group,
         skills: bestGroup.skills.slice(0, 3),
       };
-      console.log(`[RAG] Best skill group: ${bestGroup.group.label} (avg sim: ${bestAvg.toFixed(3)}, ${bestGroup.skills.length} skills)`);
+      debugLog(`[RAG] Best skill group: ${bestGroup.group.label} (avg sim: ${bestAvg.toFixed(3)}, ${bestGroup.skills.length} skills)`);
     }
   }
 
@@ -237,7 +237,7 @@ ${sessionContext}${skillFramework}
   const raw = await callLLM(RAG_SYSTEM, userMessage, apiKey, 2048);
 
   const grounded = checkGrounded(raw, sources);
-  console.log(`[RAG] Answer (${raw.length} chars, grounded=${grounded}): ${raw.slice(0, 150)}...`);
+  debugLog(`[RAG] Answer (${raw.length} chars, grounded=${grounded}): ${raw.slice(0, 150)}...`);
 
   return { answer: raw, sources, grounded, matchedSkillGroup };
 }
