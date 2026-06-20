@@ -16,6 +16,7 @@ export async function hybridSearch(
   topK = 5,
 ): Promise<SearchResult[]> {
   const allEmb = await getAllEmbeddings();
+  console.log(`[HybridSearch] Total embeddings in DB: ${allEmb.length}`);
 
   if (allEmb.length === 0) return [];
 
@@ -23,9 +24,15 @@ export async function hybridSearch(
   const [semanticResults, keywordResults] = await Promise.all([
     (async () => {
       const qEmb = await generateEmbedding(query);
-      return vectorSearch(qEmb, topK * 2);
+      const results = await vectorSearch(qEmb, topK * 2);
+      console.log(`[HybridSearch] Semantic results: ${results.length} (top similarity: ${results[0]?.similarity?.toFixed(3) ?? 'N/A'})`);
+      return results;
     })(),
-    Promise.resolve(keywordSearch(allEmb, query).slice(0, topK * 2)),
+    (async () => {
+      const results = keywordSearch(allEmb, query).slice(0, topK * 2);
+      console.log(`[HybridSearch] Keyword results: ${results.length} (top score: ${results[0]?.similarity?.toFixed(3) ?? 'N/A'})`);
+      return results;
+    })(),
   ]);
 
   // Merge with reciprocal rank fusion
@@ -72,9 +79,12 @@ export async function askAgent(
   apiKey?: string,
 ): Promise<AgentResponse> {
   // Step 1: Hybrid search for relevant content
+  console.log(`[RAG] Searching for: "${question}"`);
   const results = await hybridSearch(question, 5);
+  console.log(`[RAG] Found ${results.length} results (top scores: ${results.slice(0, 3).map(r => r.similarity.toFixed(3)).join(', ')})`);
 
   if (results.length === 0) {
+    console.log('[RAG] No results in knowledge base');
     return {
       answer: "知识库中还没有相关内容。请先录制并处理一些会议或课程。",
       sources: [],
@@ -135,6 +145,7 @@ ${sessionContext}
 
   // Step 5: Basic hallucination check — verify key claims appear in sources
   const grounded = checkGrounded(raw, sources);
+  console.log(`[RAG] Answer (${raw.length} chars, grounded=${grounded}): ${raw.slice(0, 150)}...`);
 
   return { answer: raw, sources, grounded };
 }
