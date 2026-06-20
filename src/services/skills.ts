@@ -31,14 +31,18 @@ export async function initSkillsTable(): Promise<void> {
       id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL,
       category TEXT NOT NULL DEFAULT 'other', source_session_ids TEXT NOT NULL DEFAULT '[]',
       merged_from TEXT NOT NULL DEFAULT '[]', merged_into TEXT,
+      embedding TEXT,
       use_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_skills_category ON skills(category);
     CREATE INDEX IF NOT EXISTS idx_skills_merged_into ON skills(merged_into);
   `);
+  // Migration: add embedding column
+  try { await d.execAsync('ALTER TABLE skills ADD COLUMN embedding TEXT'); } catch {}
 }
 
-export async function insertSkill(skill: Skill): Promise<void> {
+export async function insertSkill(skill: Skill, embedding?: number[]): Promise<void> {
+  const embJson = embedding ? JSON.stringify(embedding) : null;
   if (Platform.OS === "web") {
     const skills = getMem("skills") as Skill[];
     const idx = skills.findIndex((s) => s.id === skill.id);
@@ -47,11 +51,17 @@ export async function insertSkill(skill: Skill): Promise<void> {
   }
   const d = await getNativeDb();
   await d.runAsync(
-    `INSERT OR REPLACE INTO skills (id, name, description, category, source_session_ids, merged_from, merged_into, use_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO skills (id, name, description, category, source_session_ids, merged_from, merged_into, embedding, use_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     skill.id, skill.name, skill.description, skill.category,
     JSON.stringify(skill.sourceSessionIds), JSON.stringify(skill.mergedFrom),
-    skill.mergedInto ?? null, skill.useCount, skill.createdAt, skill.updatedAt,
+    skill.mergedInto ?? null, embJson, skill.useCount, skill.createdAt, skill.updatedAt,
   );
+}
+
+export async function updateSkillEmbedding(id: string, embedding: number[]): Promise<void> {
+  if (Platform.OS === "web") return;
+  const d = await getNativeDb();
+  await d.runAsync('UPDATE skills SET embedding = ? WHERE id = ?', JSON.stringify(embedding), id);
 }
 
 export async function getAllSkills(): Promise<Skill[]> {
@@ -167,3 +177,96 @@ function rowToSkill(r: any): Skill {
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
+
+// ─── Skill Search (Semantic) ───
+
+interface SkillWithEmbedding {
+  skill: Skill;
+  embedding: number[];
+  similarity: number;
+}
+
+export async function searchSkillsByEmbedding(
+  queryEmbedding: number[],
+  topK = 5,
+): Promise<SkillWithEmbedding[]> {
+  const d = await getNativeDb();
+  const rows = await d.getAllAsync(
+    "SELECT * FROM skills WHERE merged_into IS NULL AND embedding IS NOT NULL",
+  );
+
+  const results: SkillWithEmbedding[] = [];
+  for (const r of rows) {
+    const emb = JSON.parse(r.embedding);
+    const sim = cosineSimilarity(queryEmbedding, emb);
+    results.push({ skill: rowToSkill(r), embedding: emb, similarity: sim });
+  }
+  results.sort((a, b) => b.similarity - a.similarity);
+  return results.slice(0, topK);
+}
+
+// ─── Display Group Helpers ───
+
+export interface SkillDisplayGroup {
+  key: string;
+  icon: string;
+  label: string;
+  categories: SkillCategory[];
+}
+
+export const SKILL_DISPLAY_GROUPS: SkillDisplayGroup[] = [
+  {
+    key: "problem_solving_group",
+    icon: "🧠",
+    label: "解题思路",
+    categories: ["problem_solving", "learning_strategy", "knowledge_connection"],
+  },
+  {
+    key: "teaching_group",
+    icon: "📖",
+    label: "教学思路",
+    categories: ["teaching_strategy", "engagement_technique", "question_design", "assessment", "teaching_method"],
+  },
+  {
+    key: "decision_group",
+    icon: "📊",
+    label: "决策思路",
+    categories: ["decision_framework", "meeting_process", "problem_identification", "decision_pattern", "meeting_practice"],
+  },
+  {
+    key: "action_group",
+    icon: "✅",
+    label: "行动思路",
+    categories: ["action_tracking", "communication_insight", "personal_productivity", "communication"],
+  },
+];
+
+export function getDisplayGroup(category: SkillCategory): SkillDisplayGroup | undefined {
+  return SKILL_DISPLAY_GROUPS.find((g) => g.categories.includes(category));
+}
+
+export const CATEGORY_LABELS: Record<string, string> = {
+  // Classroom-Student
+  problem_solving: "解题方法",
+  learning_strategy: "学习策略",
+  knowledge_connection: "知识关联",
+  // Classroom-Teacher
+  teaching_strategy: "教学策略",
+  engagement_technique: "互动技巧",
+  question_design: "提问设计",
+  assessment: "评估方法",
+  // Meeting-Organizer
+  decision_framework: "决策框架",
+  meeting_process: "会议流程",
+  problem_identification: "问题识别",
+  // Meeting-Attendee
+  action_tracking: "行动追踪",
+  communication_insight: "沟通要点",
+  personal_productivity: "个人效能",
+  // Legacy
+  teaching_method: "教学方法",
+  meeting_practice: "会议实践",
+  decision_pattern: "决策模式",
+  communication: "沟通技巧",
+  other: "其他",
+};

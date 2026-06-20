@@ -105,6 +105,20 @@ async function runPipeline(sessionId: string): Promise<void> {
       await updateSessionEmbeddingMethod(sessionId, embMethod);
     }
 
+    // ── Stage 4: Skill Extraction ──
+    session = await getSessionById(sessionId);
+    if (session?.transcript) {
+      console.log('[Pipeline] Stage 4: Extracting skills...');
+      notify();
+      try {
+        const { extractSkills } = await import("./extraction");
+        const skills = await extractSkills(session.transcript, session.mode, sessionId);
+        console.log(`[Pipeline] Extracted ${skills.length} skills`);
+      } catch (e: any) {
+        console.log(`[Pipeline] Skill extraction failed (non-fatal): ${e?.message || e}`);
+      }
+    }
+
     await updateSessionPhase(sessionId, "done");
     currentSessionId = null;
     abortFn = null;

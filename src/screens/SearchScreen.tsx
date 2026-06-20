@@ -10,14 +10,17 @@ import {
   Platform,
   ActivityIndicator,
 } from "react-native";
-import { askAgent, type AgentResponse } from "../services/ragAgent";
+import { askAgent, type AgentResponse, type MatchedSkillGroup } from "../services/ragAgent";
 import { getApiKey } from "../services/api";
+import type { Skill } from "../types";
+import { CATEGORY_LABELS } from "../services/skills";
 
 interface Message {
   role: "user" | "agent";
   content: string;
   sources?: string[];
   grounded?: boolean;
+  matchedSkillGroup?: MatchedSkillGroup;
 }
 
 export default function SearchScreen() {
@@ -31,6 +34,13 @@ export default function SearchScreen() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+
+  const showSkillDetail = useCallback((skill: Skill) => {
+    Alert.alert(
+      skill.name,
+      `${skill.description}\n\n分类：${CATEGORY_LABELS[skill.category] ?? skill.category}\n来源会话：${skill.sourceSessionIds.length} 个`,
+    );
+  }, []);
 
   const handleSend = useCallback(async () => {
     const question = input.trim();
@@ -51,6 +61,7 @@ export default function SearchScreen() {
           content: response.answer,
           sources: response.sources,
           grounded: response.grounded,
+          matchedSkillGroup: response.matchedSkillGroup,
         },
       ]);
     } catch (e: any) {
@@ -90,6 +101,28 @@ export default function SearchScreen() {
               item.role === "user" ? styles.userBubble : styles.agentBubble,
             ]}
           >
+            {item.matchedSkillGroup && (
+              <View style={styles.skillsSection}>
+                <Text style={styles.skillsTitle}>
+                  📋 相关已总结 Skill
+                </Text>
+                <Text style={styles.skillsGroupLabel}>
+                  {item.matchedSkillGroup.group.icon} {item.matchedSkillGroup.group.label}
+                </Text>
+                <View style={styles.skillsRow}>
+                  {item.matchedSkillGroup.skills.map((s) => (
+                    <TouchableOpacity
+                      key={s.skill.id}
+                      style={styles.skillBadge}
+                      onPress={() => showSkillDetail(s.skill)}
+                    >
+                      <Text style={styles.skillBadgeText}>{s.skill.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+
             <Text
               style={[
                 styles.bubbleText,
@@ -210,4 +243,20 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: { backgroundColor: "#DADCE0" },
   sendButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
+  skillsSection: {
+    marginBottom: 10,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.08)",
+  },
+  skillsTitle: { fontSize: 12, fontWeight: "600", color: "rgba(0,0,0,0.55)", marginBottom: 4 },
+  skillsGroupLabel: { fontSize: 13, fontWeight: "600", color: "#1A1A1A", marginBottom: 6 },
+  skillsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  skillBadge: {
+    backgroundColor: "#E8F0FE",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  skillBadgeText: { fontSize: 12, color: "#1A73E8", fontWeight: "500" },
 });

@@ -58,12 +58,12 @@ export default function AppNavigator() {
       <Tab.Screen
         name="Skills"
         component={SkillsScreen}
-        options={{ tabBarLabel: "Skills" }}
+        options={{ tabBarLabel: "Skills Summary" }}
       />
       <Tab.Screen
         name="Search"
         component={SearchScreen}
-        options={{ tabBarLabel: "Search" }}
+        options={{ tabBarLabel: "Ask" }}
       />
       <Tab.Screen
         name="Settings"

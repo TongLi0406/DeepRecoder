@@ -121,7 +121,17 @@ export interface ApiKeyStatus {
 
 // ─── Skills ───
 
-export type SkillCategory = "problem_solving" | "teaching_method" | "meeting_practice" | "decision_pattern" | "communication" | "other";
+export type SkillCategory =
+  // Classroom-Student
+  | "problem_solving" | "learning_strategy" | "knowledge_connection"
+  // Classroom-Teacher
+  | "teaching_strategy" | "engagement_technique" | "question_design" | "assessment"
+  // Meeting-Organizer
+  | "decision_framework" | "meeting_process" | "problem_identification"
+  // Meeting-Attendee
+  | "action_tracking" | "communication_insight" | "personal_productivity"
+  // Legacy / fallback
+  | "teaching_method" | "meeting_practice" | "decision_pattern" | "communication" | "other";
 
 export interface Skill {
   id: string;

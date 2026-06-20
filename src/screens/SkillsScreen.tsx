@@ -12,17 +12,9 @@ import type { Skill, ConsolidationResult } from "../types";
 import {
   getAllSkills,
   findConsolidationCandidates,
+  CATEGORY_LABELS,
 } from "../services/skills";
 import { quickConsolidation } from "../services/consolidation";
-
-const CATEGORY_LABELS: Record<string, string> = {
-  problem_solving: "Problem Solving",
-  teaching_method: "Teaching Method",
-  meeting_practice: "Meeting Practice",
-  decision_pattern: "Decision Pattern",
-  communication: "Communication",
-  other: "Other",
-};
 
 export default function SkillsScreen() {
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -70,9 +62,9 @@ export default function SkillsScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Skills</Text>
+        <Text style={styles.title}>Skills Summary</Text>
         <Text style={styles.subtitle}>
-          {skills.length} skills extracted · {candidateCount} merge candidates
+          跨会话提炼的解题方法、决策模式与沟通技巧 · {skills.length} 条
         </Text>
       </View>
 
@@ -96,7 +88,7 @@ export default function SkillsScreen() {
         <View style={styles.empty}>
           <Text style={styles.emptyIcon}>🧩</Text>
           <Text style={styles.emptyText}>
-            No skills yet. Record sessions to build your skill library.
+            暂无已总结 Skill。录制并处理会话后自动提取。
           </Text>
         </View>
       ) : (

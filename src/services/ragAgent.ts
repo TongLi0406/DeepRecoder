@@ -7,7 +7,13 @@ import {
   type SearchResult,
 } from "./vectorStore";
 import { getAllSessions } from "./storage";
-import type { Session } from "../types";
+import {
+  searchSkillsByEmbedding,
+  getDisplayGroup,
+  SKILL_DISPLAY_GROUPS,
+  type SkillDisplayGroup,
+} from "./skills";
+import type { Skill } from "../types";
 
 // ─── Hybrid Search ───
 
@@ -63,14 +69,21 @@ const RAG_SYSTEM = `你是一个知识库问答助手。基于提供的上下文
 
 规则：
 1. 只基于下方"参考资料"中的内容回答。如果答案不在参考资料中，说"我在知识库中没有找到相关信息"——不要猜测或编造。
-2. 每个回答后附上引用来源，格式：[来源: 内容片段]
-3. 如果参考资料中有相互矛盾的信息，指出矛盾并给出两种观点。
-4. 回答简洁直接，使用中文。`;
+2. 如果提供了"思维框架"，用于组织你的回答结构，但不提供框架中没有的事实。
+3. 每个回答后附上引用来源，格式：[来源: 内容片段]
+4. 如果参考资料中有相互矛盾的信息，指出矛盾并给出两种观点。
+5. 回答简洁直接，使用中文。`;
+
+export interface MatchedSkillGroup {
+  group: SkillDisplayGroup;
+  skills: { skill: Skill; similarity: number }[];
+}
 
 export interface AgentResponse {
   answer: string;
   sources: string[];
   grounded: boolean;
+  matchedSkillGroup?: MatchedSkillGroup;
 }
 
 export async function askAgent(
@@ -78,34 +91,105 @@ export async function askAgent(
   sessionIds?: string[],
   apiKey?: string,
 ): Promise<AgentResponse> {
-  // Step 1: Hybrid search for relevant content
-  console.log(`[RAG] Searching for: "${question}"`);
-  const results = await hybridSearch(question, 5);
-  console.log(`[RAG] Found ${results.length} results (top scores: ${results.slice(0, 3).map(r => r.similarity.toFixed(3)).join(', ')})`);
+  // Step 1: Generate query embedding (shared by both searches)
+  const qEmb = await generateEmbedding(question);
 
-  if (results.length === 0) {
-    console.log('[RAG] No results in knowledge base');
+  // Step 2: Hybrid search + Skill search in parallel
+  const [ragResults, skillResults] = await Promise.all([
+    (async () => {
+      const allEmb = await getAllEmbeddings();
+      if (allEmb.length === 0) return [] as SearchResult[];
+
+      const [semanticResults, keywordResults] = await Promise.all([
+        vectorSearch(qEmb, 10),
+        Promise.resolve(keywordSearch(allEmb, question).slice(0, 10)),
+      ]);
+
+      // RRF merge
+      const scored = new Map<string, number>();
+      const details = new Map<string, SearchResult>();
+      const k = 60;
+      for (let rank = 0; rank < semanticResults.length; rank++) {
+        const r = semanticResults[rank];
+        scored.set(r.embeddingRow.id, (scored.get(r.embeddingRow.id) ?? 0) + 1 / (k + rank + 1));
+        details.set(r.embeddingRow.id, r);
+      }
+      for (let rank = 0; rank < keywordResults.length; rank++) {
+        const r = keywordResults[rank];
+        scored.set(r.embeddingRow.id, (scored.get(r.embeddingRow.id) ?? 0) + 1 / (k + rank + 1));
+        if (!details.has(r.embeddingRow.id)) details.set(r.embeddingRow.id, r);
+      }
+      return Array.from(scored.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([id]) => details.get(id)!);
+    })(),
+    searchSkillsByEmbedding(qEmb, 10),
+  ]);
+
+  console.log(`[RAG] Searching for: "${question}"`);
+  console.log(`[RAG] Found ${ragResults.length} RAG results, ${skillResults.length} skills`);
+
+  // Step 3: Select best display group for skills
+  let matchedSkillGroup: MatchedSkillGroup | undefined;
+  if (skillResults.length > 0) {
+    // Group skills by display group, compute average similarity per group
+    const groupStats = new Map<string, { group: SkillDisplayGroup; skills: typeof skillResults; totalSim: number }>();
+    for (const sr of skillResults) {
+      const g = getDisplayGroup(sr.skill.category);
+      if (!g) continue;
+      const existing = groupStats.get(g.key);
+      if (existing) {
+        existing.skills.push(sr);
+        existing.totalSim += sr.similarity;
+      } else {
+        groupStats.set(g.key, { group: g, skills: [sr], totalSim: sr.similarity });
+      }
+    }
+
+    // Pick group with highest average similarity
+    let bestAvg = 0;
+    let bestGroup: typeof groupStats extends Map<string, infer T> ? T | undefined : never;
+    for (const [, stats] of groupStats) {
+      const avg = stats.totalSim / stats.skills.length;
+      if (avg > bestAvg) { bestAvg = avg; bestGroup = stats; }
+    }
+
+    if (bestGroup && bestAvg >= 0.5) {
+      bestGroup.skills.sort((a, b) => b.similarity - a.similarity);
+      matchedSkillGroup = {
+        group: bestGroup.group,
+        skills: bestGroup.skills.slice(0, 3),
+      };
+      console.log(`[RAG] Best skill group: ${bestGroup.group.label} (avg sim: ${bestAvg.toFixed(3)}, ${bestGroup.skills.length} skills)`);
+    }
+  }
+
+  // Handle no results
+  if (ragResults.length === 0) {
     return {
       answer: "知识库中还没有相关内容。请先录制并处理一些会议或课程。",
       sources: [],
       grounded: true,
+      matchedSkillGroup,
     };
   }
 
   // Filter to session scope if provided
   const relevant = sessionIds
-    ? results.filter((r) => sessionIds.includes(r.embeddingRow.sessionId))
-    : results;
+    ? ragResults.filter((r) => sessionIds.includes(r.embeddingRow.sessionId))
+    : ragResults;
 
   if (relevant.length === 0) {
     return {
       answer: "在当前范围内没有找到相关信息。",
       sources: [],
       grounded: true,
+      matchedSkillGroup,
     };
   }
 
-  // Step 2: Build context from retrieved embeddings
+  // Step 4: Build context
   const sources: string[] = relevant.map(
     (r) => `[${r.embeddingRow.contentType}] ${r.embeddingRow.contentText}`,
   );
@@ -117,7 +201,7 @@ export async function askAgent(
     )
     .join("\n");
 
-  // Step 3: Get session info for richer context
+  // Session context
   const allSessions = await getAllSessions();
   const sessionMap = new Map(allSessions.map((s) => [s.id, s]));
 
@@ -130,12 +214,21 @@ export async function askAgent(
     .filter(Boolean)
     .join("\n");
 
-  // Step 4: Generate answer
+  // Step 5: Build skill framework for LLM prompt
+  let skillFramework = "";
+  if (matchedSkillGroup) {
+    const skillLines = matchedSkillGroup.skills.map(
+      (s) => `- [${s.skill.name}] ${s.skill.description}`,
+    );
+    skillFramework = `\n\n思维框架（${matchedSkillGroup.group.label}）：\n${skillLines.join("\n")}\n\n请参考以上思维框架组织你的回答结构，但事实内容只来自参考资料。`;
+  }
+
+  // Step 6: Generate answer
   const userMessage = `参考资料：
 ${context}
 
 相关会话：
-${sessionContext}
+${sessionContext}${skillFramework}
 
 用户问题：${question}
 
@@ -143,16 +236,13 @@ ${sessionContext}
 
   const raw = await callLLM(RAG_SYSTEM, userMessage, apiKey, 2048);
 
-  // Step 5: Basic hallucination check — verify key claims appear in sources
   const grounded = checkGrounded(raw, sources);
   console.log(`[RAG] Answer (${raw.length} chars, grounded=${grounded}): ${raw.slice(0, 150)}...`);
 
-  return { answer: raw, sources, grounded };
+  return { answer: raw, sources, grounded, matchedSkillGroup };
 }
 
 function checkGrounded(answer: string, sources: string[]): boolean {
-  // Simple heuristic: if the answer says "没有找到" or "no information",
-  // it's grounded (honest). If it makes claims, check for source overlap.
   const lowerAnswer = answer.toLowerCase();
 
   if (
@@ -163,7 +253,6 @@ function checkGrounded(answer: string, sources: string[]): boolean {
     return true;
   }
 
-  // Check if at least some key terms from sources appear in the answer
   const sourceText = sources.join(" ").toLowerCase();
   const keyTerms = extractKeyTerms(lowerAnswer);
   if (keyTerms.length === 0) return true;
@@ -177,7 +266,6 @@ function checkGrounded(answer: string, sources: string[]): boolean {
 }
 
 function extractKeyTerms(text: string): string[] {
-  // Extract 3+ character Chinese words or phrases
   const terms: string[] = [];
   for (let i = 0; i < text.length - 2; i++) {
     const sub = text.slice(i, i + 3);
