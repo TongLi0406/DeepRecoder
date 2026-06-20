@@ -337,11 +337,11 @@ export default function SummaryScreen() {
                 <View style={[
                   styles.stageIndicator,
                   processingStage === "indexing" && styles.stageActive,
-                  processingStage === "done" && styles.stageDone,
+                  (processingStage === "extracting" || processingStage === "done") && styles.stageDone,
                 ]}>
                   {processingStage === "indexing" ? (
                     <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : processingStage === "done" ? (
+                  ) : processingStage === "extracting" || processingStage === "done" ? (
                     <Text style={styles.checkmark}>✓</Text>
                   ) : (
                     <Text style={styles.stageNum}>3</Text>
@@ -361,9 +361,45 @@ export default function SummaryScreen() {
                         ? "Generating embeddings for RAG knowledge base..."
                         : processingStage === "done" && session.embeddingMethod
                           ? `Indexed with ${session.embeddingMethod}`
-                          : processingStage === "done"
-                            ? "Indexing complete"
-                            : "Index knowledge base for RAG search"}
+                          : "Indexing complete"}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Connector line */}
+              <View style={[
+                styles.connector,
+                (processingStage === "done") && styles.connectorDone,
+              ]} />
+
+              {/* Stage 4: Skill Extraction */}
+              <View style={styles.stageRow}>
+                <View style={[
+                  styles.stageIndicator,
+                  processingStage === "extracting" && styles.stageActive,
+                  processingStage === "done" && styles.stageDone,
+                ]}>
+                  {processingStage === "extracting" ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : processingStage === "done" ? (
+                    <Text style={styles.checkmark}>✓</Text>
+                  ) : (
+                    <Text style={styles.stageNum}>4</Text>
+                  )}
+                </View>
+                <View style={styles.stageTextCol}>
+                  <Text style={[
+                    styles.stageTitle,
+                    processingStage === "extracting" && styles.stageTitleActive,
+                  ]}>
+                    Skill Extraction
+                  </Text>
+                  <Text style={styles.stageHint}>
+                    {processingStage === "transcribing" || processingStage === "summarizing" || processingStage === "indexing"
+                      ? "Waiting for indexing..."
+                      : processingStage === "extracting"
+                        ? "Extracting reusable skills from transcript..."
+                        : "Skills extracted"}
                   </Text>
                 </View>
               </View>

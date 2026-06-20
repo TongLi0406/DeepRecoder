@@ -8,7 +8,7 @@ import {
 } from "./storage";
 import { debugLog } from "./debug";
 
-type ProcessingPhase = "transcribing" | "summarizing" | "indexing" | "done" | "failed";
+type ProcessingPhase = "transcribing" | "summarizing" | "indexing" | "extracting" | "done" | "failed";
 
 let currentSessionId: string | null = null;
 let abortFn: (() => Promise<void>) | null = null;
@@ -109,7 +109,7 @@ async function runPipeline(sessionId: string): Promise<void> {
     // ── Stage 4: Skill Extraction ──
     session = await getSessionById(sessionId);
     if (session?.transcript) {
-      debugLog('[Pipeline] Stage 4: Extracting skills...');
+      await updateSessionPhase(sessionId, "extracting");
       notify();
       try {
         const { extractSkills } = await import("./extraction");
@@ -157,6 +157,8 @@ export async function resumeStuckTasks(): Promise<void> {
     (s) =>
       s.phase === "transcribing" ||
       s.phase === "summarizing" ||
+      s.phase === "indexing" ||
+      s.phase === "extracting" ||
       (s.phase === "recording" && s.audioUri),
   );
   if (stuck) {
