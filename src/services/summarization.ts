@@ -186,6 +186,8 @@ export async function summarize(
 
   try {
     const parsed = extractJSON(raw);
+    console.log(`[Summarize] Parsed keys: ${Object.keys(parsed).join(', ')}`);
+    console.log(`[Summarize] knowledgePoints: ${parsed.knowledgePoints?.length ?? 0}, decisions: ${parsed.decisions?.length ?? 0}, actionItems: ${parsed.actionItems?.length ?? 0}, problemSolving: ${parsed.problemSolvingApproaches?.length ?? 0}`);
     if (parsed.knowledgePoints) parsed.knowledgePoints = addIds(parsed.knowledgePoints);
     if (parsed.problemSolvingApproaches) parsed.problemSolvingApproaches = addIds(parsed.problemSolvingApproaches);
     if (parsed.interLessonConnections) parsed.interLessonConnections = addIds(parsed.interLessonConnections);

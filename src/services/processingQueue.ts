@@ -38,6 +38,8 @@ async function runPipeline(sessionId: string): Promise<void> {
   notify();
 
   try {
+    console.log(`[Pipeline] Starting for session ${sessionId.slice(0, 8)}...`);
+
     // ── Stage 1: STT ──
     let session = await getSessionById(sessionId);
     if (!session || !session.audioUri) {
@@ -45,6 +47,7 @@ async function runPipeline(sessionId: string): Promise<void> {
     }
 
     if (!session.transcript) {
+      console.log('[Pipeline] Stage 1: Transcribing...');
       await updateSessionPhase(sessionId, "transcribing");
       notify();
 
@@ -67,6 +70,8 @@ async function runPipeline(sessionId: string): Promise<void> {
       throw new Error("No transcript available");
     }
 
+    console.log(`[Pipeline] Transcript (${session.transcript.length} chars): ${session.transcript.slice(0, 200)}...`);
+    console.log('[Pipeline] Stage 2: Summarizing via LLM...');
     await updateSessionPhase(sessionId, "summarizing");
     notify();
 
@@ -87,6 +92,7 @@ async function runPipeline(sessionId: string): Promise<void> {
     );
 
     // ── Stage 3: Vector Indexing ──
+    console.log('[Pipeline] Stage 3: Vector indexing...');
     await updateSessionPhase(sessionId, "indexing");
     notify();
 
