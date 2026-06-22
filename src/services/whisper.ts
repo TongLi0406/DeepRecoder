@@ -8,7 +8,7 @@ async function ensureModel(): Promise<string> {
   if (Platform.OS === "android") {
     // Model placed directly in android/app/src/main/assets/models/
     // Bypasses Metro bundle size limit (~512MB cap)
-    return "file:///android_asset/models/ggml-medium.bin";
+    return "file:///android_asset/models/ggml-small.bin";
   }
 
   // iOS: use expo-asset (TBD)
@@ -79,8 +79,9 @@ export async function transcribeWithWhisperAbortable(
   return whisperContext.transcribe(audioUri, {
     language: "zh",
     maxLen: 0,
-    beamSize: 8,
-    bestOf: 8,
+    maxThreads: 8,
+    beamSize: 5,
+    bestOf: 5,
     temperature: 0,
   });
 }

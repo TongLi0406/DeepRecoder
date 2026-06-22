@@ -161,6 +161,11 @@ export async function askAgent(
         group: bestGroup.group,
         skills: bestGroup.skills.slice(0, 3),
       };
+      // Increment use count for matched skills
+      const { incrementUseCount } = await import("./skills");
+      for (const s of matchedSkillGroup.skills) {
+        incrementUseCount(s.skill.id).catch(() => {});
+      }
       debugLog(`[RAG] Best skill group: ${bestGroup.group.label} (avg sim: ${bestAvg.toFixed(3)}, ${bestGroup.skills.length} skills)`);
     }
   }
@@ -234,7 +239,7 @@ ${sessionContext}${skillFramework}
 
 请基于参考资料回答。如果答案不在参考资料中，明确说明。附上引用来源。`;
 
-  const raw = await callLLM(RAG_SYSTEM, userMessage, apiKey, 2048);
+  const raw = await callLLM(RAG_SYSTEM, userMessage, apiKey, 2048, false);
 
   const grounded = checkGrounded(raw, sources);
   debugLog(`[RAG] Answer (${raw.length} chars, grounded=${grounded}): ${raw.slice(0, 150)}...`);

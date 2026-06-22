@@ -155,6 +155,7 @@ export default function SummaryScreen() {
   const [session, setSession] = useState(initialSession);
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const doneReported = useRef(false);
 
   const addDebug = (msg: string) => {
     setDebugInfo(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -177,8 +178,10 @@ export default function SummaryScreen() {
       const updated = await getSessionById(initialSession.id);
       if (updated) {
         setSession(updated);
-        if (updated.phase === "done" || updated.phase === "failed") {
+        if ((updated.phase === "done" || updated.phase === "failed") && !doneReported.current) {
+          doneReported.current = true;
           addDebug(`Queue: ${updated.phase}`);
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         }
       }
     };

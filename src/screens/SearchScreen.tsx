@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { askAgent, type AgentResponse, type MatchedSkillGroup } from "../services/ragAgent";
 import { getApiKey } from "../services/api";
@@ -80,11 +81,11 @@ export default function SearchScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={90}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
       <View style={styles.header}>
-        <Text style={styles.title}>Search</Text>
+        <Text style={styles.title}>Ask</Text>
         <Text style={styles.subtitle}>Ask anything from your knowledge base</Text>
       </View>
 

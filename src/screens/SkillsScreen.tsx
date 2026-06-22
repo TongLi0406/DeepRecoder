@@ -35,7 +35,7 @@ export default function SkillsScreen() {
   const handleConsolidate = useCallback(async () => {
     setConsolidating(true);
     try {
-      const result: ConsolidationResult = await quickConsolidation(0.85);
+      const result: ConsolidationResult = await quickConsolidation(0.70);
       const msg =
         result.merged.length > 0
           ? `Merged ${result.merged.length} skill pairs. ${result.skipped.length} skipped.`
@@ -49,7 +49,7 @@ export default function SkillsScreen() {
     }
   }, [loadSkills]);
 
-  const candidateCount = findConsolidationCandidates(skills, 0.85).length;
+  const candidateCount = findConsolidationCandidates(skills, 0.70).length;
 
   if (loading) {
     return (

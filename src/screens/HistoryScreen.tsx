@@ -6,12 +6,13 @@ import {
   SectionList,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../App";
 import type { Session } from "../types";
-import { getAllSessions, getSessionById } from "../services/storage";
+import { getAllSessions, getSessionById, deleteSession } from "../services/storage";
 import { getCourseGroups, type CourseGroup } from "../services/courses";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
@@ -89,6 +90,19 @@ export default function HistoryScreen() {
         )}
         renderItem={({ item }) => {
           const s = item as CourseGroup["sessions"][0];
+          const handleDelete = () => {
+            Alert.alert("Delete Session", "This will permanently remove the session and its data.", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Delete",
+                style: "destructive",
+                onPress: async () => {
+                  await deleteSession(s.id);
+                  loadData();
+                },
+              },
+            ]);
+          };
           return (
             <TouchableOpacity
               style={styles.item}
@@ -99,12 +113,16 @@ export default function HistoryScreen() {
                   }
                 });
               }}
+              onLongPress={handleDelete}
             >
               <View style={styles.itemLeft}>
                 <Text style={styles.itemTopic} numberOfLines={1}>
                   {s.topic || "Untitled"}
                 </Text>
-                <Text style={styles.itemDate}>{formatDate(s.date)}</Text>
+                <Text style={styles.itemDate}>
+                  {formatDate(s.date)}
+                  {s.phase === "failed" ? " · Failed" : s.phase !== "done" ? ` · ${s.phase}` : ""}
+                </Text>
               </View>
               <Text style={styles.itemArrow}>→</Text>
             </TouchableOpacity>

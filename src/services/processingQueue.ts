@@ -8,10 +8,11 @@ import {
 } from "./storage";
 import { debugLog } from "./debug";
 
-type ProcessingPhase = "transcribing" | "summarizing" | "indexing" | "extracting" | "done" | "failed";
+type ProcessingPhase = "transcribing" | "summarizing" | "indexing" | "extracting" | "done" | "failed" | "queued";
 
 let currentSessionId: string | null = null;
 let abortFn: (() => Promise<void>) | null = null;
+let pendingQueue: string[] = [];
 let listeners = new Set<() => void>();
 
 function notify() {
@@ -23,8 +24,18 @@ export function addQueueListener(fn: () => void): () => void {
   return () => { listeners.delete(fn); };
 }
 
-export function getQueueState(): { sessionId: string | null; running: boolean } {
-  return { sessionId: currentSessionId, running: currentSessionId !== null };
+export function getQueueState(): {
+  sessionId: string | null;
+  running: boolean;
+  queueLength: number;
+  queueIds: string[];
+} {
+  return {
+    sessionId: currentSessionId,
+    running: currentSessionId !== null,
+    queueLength: pendingQueue.length,
+    queueIds: [...pendingQueue],
+  };
 }
 
 export async function abortProcessing(): Promise<void> {
@@ -52,7 +63,20 @@ async function runPipeline(sessionId: string): Promise<void> {
       await updateSessionPhase(sessionId, "transcribing");
       notify();
 
-      if (Platform.OS === "android") {
+      // ── Try remote STT first, fallback to local Whisper ──
+      let transcribed = false;
+
+      try {
+        const { transcribeRemote } = await import("./remoteStt");
+        const result = await transcribeRemote(session.audioUri);
+        await updateSessionTranscript(sessionId, result);
+        transcribed = true;
+        debugLog('[Pipeline] Remote STT succeeded');
+      } catch (e: any) {
+        debugLog(`[Pipeline] Remote STT failed: ${e?.message || e}, falling back to local Whisper`);
+      }
+
+      if (!transcribed && Platform.OS === "android") {
         const { transcribeWithWhisperAbortable, isWhisperAvailable } =
           await import("./whisper");
         if (isWhisperAvailable()) {
@@ -125,24 +149,32 @@ async function runPipeline(sessionId: string): Promise<void> {
     abortFn = null;
     notify();
   } catch (e: any) {
-    const phase: ProcessingPhase =
-      e?.message?.includes("abort") || e?.message?.includes("cancel")
-        ? "failed"
-        : "failed";
-    await updateSessionPhase(sessionId, phase, e?.message);
+    await updateSessionPhase(sessionId, "failed", e?.message);
     currentSessionId = null;
     abortFn = null;
     notify();
+  } finally {
+    // Process next in queue
+    if (pendingQueue.length > 0) {
+      const nextId = pendingQueue.shift()!;
+      debugLog(`[Pipeline] Dequeuing next session ${nextId.slice(0, 8)}...`);
+      runPipeline(nextId).catch(() => {});
+    }
   }
 }
 
 export function startProcessing(sessionId: string): void {
   if (currentSessionId === sessionId) return;
 
+  // Already in queue — skip
+  if (pendingQueue.includes(sessionId)) return;
+
   if (currentSessionId) {
-    abortProcessing().finally(() => {
-      runPipeline(sessionId).catch(() => {});
-    });
+    // Busy — add to queue
+    pendingQueue.push(sessionId);
+    updateSessionPhase(sessionId, "queued").catch(() => {});
+    debugLog(`[Pipeline] Queued ${sessionId.slice(0, 8)} (queue: ${pendingQueue.length})`);
+    notify();
   } else {
     runPipeline(sessionId).catch(() => {});
   }
@@ -159,9 +191,19 @@ export async function resumeStuckTasks(): Promise<void> {
       s.phase === "summarizing" ||
       s.phase === "indexing" ||
       s.phase === "extracting" ||
+      s.phase === "queued" ||
       (s.phase === "recording" && s.audioUri),
   );
   if (stuck) {
+    if (stuck.phase === "queued") {
+      pendingQueue.push(stuck.id);
+    }
     runPipeline(stuck.id).catch(() => {});
+  }
+
+  // Process any remaining queued sessions
+  while (pendingQueue.length > 0 && !currentSessionId) {
+    const nextId = pendingQueue.shift()!;
+    runPipeline(nextId).catch(() => {});
   }
 }

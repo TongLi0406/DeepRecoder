@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { debugLog } from "./debug";
 
 const API_URL = "https://api.deepseek.com/anthropic/v1/messages";
 const KEY_STORAGE_KEY = "api_key";
@@ -73,9 +74,21 @@ export async function callLLM(
   userMessage: string,
   apiKey?: string,
   maxTokens = 4096,
+  disableThinking = true,
 ): Promise<string> {
   const key = apiKey ?? (await getApiKey());
   if (!key) throw new Error("No API key configured");
+
+  const body: Record<string, unknown> = {
+    model: "deepseek-v4-pro",
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userMessage }],
+  };
+
+  if (disableThinking) {
+    body.thinking = { type: "disabled" };
+  }
 
   const res = await fetch(API_URL, {
     method: "POST",
@@ -84,12 +97,7 @@ export async function callLLM(
       "Content-Type": "application/json",
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
-      model: "deepseek-v4-pro",
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userMessage }],
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -99,14 +107,30 @@ export async function callLLM(
 
   const data = await res.json();
 
+  debugLog(`[API] Thinking: ${disableThinking ? "OFF" : "ON"}, blocks: ${(data.content ?? []).map((b: any) => b.type).join(", ")}`);
+
   // Anthropic-compatible format: data.content[0].text
+  // DeepSeek v4-pro may return both "thinking" and "text" blocks
+  let textParts: string[] = [];
   for (const block of data.content ?? []) {
-    if (block.type === "text") return block.text;
+    if (block.type === "text" && block.text) {
+      textParts.push(block.text);
+    }
   }
+  if (textParts.length > 0) return textParts.join("");
 
   // OpenAI-compatible format: data.choices[0].message.content
   const openaiText = data.choices?.[0]?.message?.content;
   if (openaiText) return openaiText;
+
+  // Fallback: if only thinking blocks (DeepSeek v4-pro edge case), return thinking content
+  let thinkingParts: string[] = [];
+  for (const block of data.content ?? []) {
+    if (block.type === "thinking" && block.thinking) {
+      thinkingParts.push(block.thinking);
+    }
+  }
+  if (thinkingParts.length > 0) return thinkingParts.join("");
 
   throw new Error(`Unexpected API response: ${JSON.stringify(data).slice(0, 500)}`);
 }
