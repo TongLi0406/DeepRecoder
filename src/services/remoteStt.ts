@@ -32,11 +32,11 @@ export async function transcribeRemote(
     : lower.endsWith(".3gp") ? "audio/3gpp"
     : "audio/wav";
 
-  // Dynamic timeout: 1s per 500KB, min 60s, max 600s
+  // Dynamic timeout: 1s per 500KB + 30s buffer, min 60s
   const wavFile = new File(filePath);
   const fileSize = wavFile.exists ? (wavFile.size ?? 0) : 0;
   const timeoutMs = fileSize > 0
-    ? Math.max(60000, Math.min(600000, (fileSize / 500000) * 1000 + 30000))
+    ? Math.max(60000, (fileSize / 500000) * 1000 + 30000)
     : 60000;
   debugLog(`[RemoteSTT] Uploading ${(fileSize / 1e6).toFixed(1)}MB, timeout=${(timeoutMs / 1000).toFixed(0)}s`);
 
