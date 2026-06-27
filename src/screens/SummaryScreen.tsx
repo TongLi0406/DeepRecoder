@@ -7,14 +7,17 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../App";
 import type { StudentSummary, TeacherSummary, MeetingSummary } from "../types";
-import { getSessionById } from "../services/storage";
+import { getSessionById, getSessionPartialSummary, updateSessionPhase } from "../services/storage";
 import { startProcessing, abortProcessing, getQueueState, addQueueListener } from "../services/processingQueue";
+import { sessionToHtml, sessionToMarkdown } from "../services/export";
+import { analyzeEngagement } from "../services/engagement";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Summary">;
 type Route = RouteProp<RootStackParamList, "Summary">;
@@ -62,7 +65,9 @@ function StudentSummaryView({ summary }: { summary: StudentSummary }) {
   );
 }
 
-function TeacherSummaryView({ summary }: { summary: TeacherSummary }) {
+function TeacherSummaryView({ summary, transcript }: { summary: TeacherSummary; transcript?: string }) {
+  const analytics = transcript ? analyzeEngagement(transcript) : null;
+
   return (
     <>
       <View style={styles.headerCard}>
@@ -70,6 +75,30 @@ function TeacherSummaryView({ summary }: { summary: TeacherSummary }) {
           Style: {summary.teachingStyle} · Interaction: {summary.interactionLevel}
         </Text>
       </View>
+
+      {analytics && (
+        <View style={styles.engagementCard}>
+          <Text style={styles.engagementTitle}>Engagement Metrics</Text>
+          <View style={styles.engagementGrid}>
+            <View style={styles.engagementStat}>
+              <Text style={styles.engagementValue}>{analytics.speakerCount}</Text>
+              <Text style={styles.engagementLabel}>Speakers</Text>
+            </View>
+            <View style={styles.engagementStat}>
+              <Text style={styles.engagementValue}>{analytics.questionCount}</Text>
+              <Text style={styles.engagementLabel}>Questions</Text>
+            </View>
+            <View style={styles.engagementStat}>
+              <Text style={styles.engagementValue}>{Math.round(analytics.participationRatio * 100)}%</Text>
+              <Text style={styles.engagementLabel}>Student Talk</Text>
+            </View>
+            <View style={styles.engagementStat}>
+              <Text style={styles.engagementValue}>{analytics.teacherUtterances + analytics.studentUtterances}</Text>
+              <Text style={styles.engagementLabel}>Utterances</Text>
+            </View>
+          </View>
+        </View>
+      )}
 
       <Text style={styles.section}>Teaching Structure</Text>
       {summary.teachingStructure.map((s, i) => (
@@ -153,6 +182,7 @@ export default function SummaryScreen() {
   const { session: initialSession } = route.params;
 
   const [session, setSession] = useState(initialSession);
+  const [streamingText, setStreamingText] = useState("");
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const doneReported = useRef(false);
@@ -178,6 +208,11 @@ export default function SummaryScreen() {
       const updated = await getSessionById(initialSession.id);
       if (updated) {
         setSession(updated);
+        // Poll for streaming text during summarization
+        if (updated.phase === "summarizing") {
+          const text = await getSessionPartialSummary(initialSession.id);
+          if (text) setStreamingText(text);
+        }
         if ((updated.phase === "done" || updated.phase === "failed") && !doneReported.current) {
           doneReported.current = true;
           addDebug(`Queue: ${updated.phase}`);
@@ -199,6 +234,42 @@ export default function SummaryScreen() {
       unsub();
     };
   }, [initialSession.id]);
+
+  const handleShare = async () => {
+    Alert.alert("Export", "Choose export format:", [
+      {
+        text: "PDF",
+        onPress: async () => {
+          try {
+            const { printToFileAsync } = await import("expo-print");
+            const { shareAsync } = await import("expo-sharing");
+            const html = sessionToHtml(session);
+            const file = await printToFileAsync({ html, base64: false });
+            await shareAsync(file.uri, { mimeType: "application/pdf" });
+          } catch (e: any) {
+            Alert.alert("Export failed", e.message);
+          }
+        },
+      },
+      {
+        text: "Markdown",
+        onPress: async () => {
+          try {
+            const { writeAsStringAsync, documentDirectory } = await import("expo-file-system/legacy");
+            const { shareAsync } = await import("expo-sharing");
+            const md = sessionToMarkdown(session);
+            const name = (session.title || "session").replace(/[^a-zA-Z0-9一-鿿]/g, "_");
+            const fileUri = `${documentDirectory}${name}.md`;
+            await writeAsStringAsync(fileUri, md, { encoding: "utf8" });
+            await shareAsync(fileUri, { mimeType: "text/markdown" });
+          } catch (e: any) {
+            Alert.alert("Export failed", e.message);
+          }
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
 
   const handleDone = () => {
     if (processing) {
@@ -234,6 +305,8 @@ export default function SummaryScreen() {
   };
 
   const summary = session.summary;
+  const speakerLabeled = (summary as any)?.speakerLabeledTranscript as string | undefined;
+  const displayTranscript = speakerLabeled || session.transcript;
   const displayTitle =
     session.title ||
     (summary && session.mode.startsWith("classroom")
@@ -259,6 +332,15 @@ export default function SummaryScreen() {
         {processing && (
           <View style={styles.processing}>
             <Text style={styles.processingTitle}>Processing Recording</Text>
+
+            {streamingText.length > 0 && (
+              <View style={styles.streamingCard}>
+                <Text style={styles.streamingTitle}>AI is generating summary...</Text>
+                <Text style={styles.streamingText} numberOfLines={20}>
+                  {streamingText}
+                </Text>
+              </View>
+            )}
 
             <View style={styles.stagesContainer}>
               {/* Stage 1: STT */}
@@ -414,6 +496,16 @@ export default function SummaryScreen() {
           <View style={styles.errorCard}>
             <Text style={styles.errorTitle}>Processing Error</Text>
             <Text style={styles.errorText}>{session.error || "Unknown error"}</Text>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => {
+                setSession((s) => s ? { ...s, phase: "queued", error: undefined } : s);
+                updateSessionPhase(session.id, "queued").catch(() => {});
+                startProcessing(session.id);
+              }}
+            >
+              <Text style={styles.retryButtonText}>Retry Processing</Text>
+            </TouchableOpacity>
             {session.transcript && (
               <>
                 <Text style={styles.section}>Raw Transcript</Text>
@@ -447,12 +539,25 @@ export default function SummaryScreen() {
           </View>
         )}
 
-        {session.transcript && !summary && (
+        {displayTranscript && !summary && (
           <>
             <Text style={styles.section}>Transcript</Text>
             <View style={styles.transcriptCard}>
               <Text style={styles.transcriptText}>
-                {session.transcript}
+                {displayTranscript}
+              </Text>
+            </View>
+          </>
+        )}
+
+        {displayTranscript && summary && (
+          <>
+            <Text style={styles.section}>
+              {speakerLabeled ? "Speaker-Labeled Transcript" : "Transcript"}
+            </Text>
+            <View style={styles.transcriptCard}>
+              <Text style={styles.transcriptText}>
+                {displayTranscript}
               </Text>
             </View>
           </>
@@ -462,7 +567,7 @@ export default function SummaryScreen() {
           <StudentSummaryView summary={summary as StudentSummary} />
         )}
         {summary && session.mode === "classroom-teacher" && (
-          <TeacherSummaryView summary={summary as TeacherSummary} />
+          <TeacherSummaryView summary={summary as TeacherSummary} transcript={speakerLabeled} />
         )}
         {summary && session.mode.startsWith("meeting") && (
           <MeetingSummaryView summary={summary as MeetingSummary} />
@@ -470,7 +575,7 @@ export default function SummaryScreen() {
       </ScrollView>
 
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.shareButton}>
+        <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
           <Text style={styles.shareButtonText}>Share</Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -562,6 +667,14 @@ const styles = StyleSheet.create({
   },
   errorTitle: { fontSize: 15, fontWeight: "600", color: "#C5221F" },
   errorText: { fontSize: 13, color: "#C5221F", marginTop: 4 },
+  retryButton: {
+    marginTop: 16,
+    backgroundColor: "#1A73E8",
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  retryButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
   transcriptCard: {
     backgroundColor: "#F8F9FA",
     borderRadius: 10,
@@ -611,4 +724,24 @@ const styles = StyleSheet.create({
   },
   debugTitle: { fontSize: 14, fontWeight: "600", color: "#1A73E8", marginBottom: 8 },
   debugText: { fontSize: 11, color: "#3C4043", fontFamily: "monospace", lineHeight: 16 },
+  streamingCard: {
+    backgroundColor: "#F8F9FA",
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 24,
+    width: "100%",
+  },
+  streamingTitle: { fontSize: 13, fontWeight: "600", color: "#1A73E8", marginBottom: 8 },
+  streamingText: { fontSize: 12, color: "#3C4043", lineHeight: 18 },
+  engagementCard: {
+    backgroundColor: "#F0F4F8",
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 8,
+  },
+  engagementTitle: { fontSize: 13, fontWeight: "600", color: "#5F6368", marginBottom: 8 },
+  engagementGrid: { flexDirection: "row", justifyContent: "space-between" },
+  engagementStat: { alignItems: "center" },
+  engagementValue: { fontSize: 20, fontWeight: "700", color: "#1A73E8" },
+  engagementLabel: { fontSize: 11, color: "#5F6368", marginTop: 2 },
 });

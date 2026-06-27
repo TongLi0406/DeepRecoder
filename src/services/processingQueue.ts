@@ -63,29 +63,106 @@ async function runPipeline(sessionId: string): Promise<void> {
       await updateSessionPhase(sessionId, "transcribing");
       notify();
 
-      // ── Try remote STT first, fallback to local Whisper ──
+      // ── Stage 1: Remote + Local race (WAV), or Remote-only (non-WAV) ──
       let transcribed = false;
+      const isWav = session.audioUri.toLowerCase().endsWith(".wav");
 
-      try {
-        const { transcribeRemote } = await import("./remoteStt");
-        const result = await transcribeRemote(session.audioUri);
-        await updateSessionTranscript(sessionId, result);
-        transcribed = true;
-        debugLog('[Pipeline] Remote STT succeeded');
-      } catch (e: any) {
-        debugLog(`[Pipeline] Remote STT failed: ${e?.message || e}, falling back to local Whisper`);
+      // ── TEST: Remote-only mode (local Whisper temporarily disabled) ──
+      const REMOTE_ONLY = true;
+
+      if (isWav && Platform.OS === "android") {
+        let winner: string | null = null;
+
+        if (REMOTE_ONLY) {
+          // Remote-only test: skip local Whisper entirely
+          try {
+            const { transcribeRemote } = await import("./remoteStt");
+            const result = await transcribeRemote(session.audioUri);
+            if (result && result.length > 0 && !/^(moog|MooG)+$/i.test(result.trim())) {
+              await updateSessionTranscript(sessionId, result);
+              transcribed = true;
+              winner = "remote";
+              debugLog(`[Pipeline] Remote-only: STT succeeded, ${result.length} chars`);
+            }
+          } catch (e: any) {
+            debugLog(`[Pipeline] Remote-only: STT failed — ${e?.message || e}`);
+          }
+        } else {
+          // Race remote STT against local Whisper — use whichever finishes first
+          let localTask: { stop: () => Promise<void>; promise: Promise<{ result: string }> } | null = null;
+
+          const remoteRace = (async () => {
+            try {
+              const { transcribeRemote } = await import("./remoteStt");
+              const result = await transcribeRemote(session.audioUri);
+              if (result && result.length > 0 && !/^(moog|MooG)+$/i.test(result.trim())) {
+                return result;
+              }
+            } catch (e: any) {
+              debugLog(`[Pipeline] Remote STT lost race: ${e?.message || e}`);
+            }
+            return null;
+          })();
+
+          const localRace = (async () => {
+            try {
+              const { transcribeWithWhisperAbortable, isWhisperAvailable } =
+                await import("./whisper");
+              if (!isWhisperAvailable()) return null;
+              localTask = await transcribeWithWhisperAbortable(session.audioUri);
+              const { result } = await localTask.promise;
+              if (result && !/^(moog|MooG)+$/i.test(result.trim())) {
+                return result;
+              }
+            } catch (e: any) {
+              debugLog(`[Pipeline] Local Whisper lost race: ${e?.message || e}`);
+            }
+            return null;
+          })();
+
+          // Race: first non-null result wins. If both return null, fall through.
+          const raceResult = await new Promise<{ source: string; text: string } | null>(
+            (resolve) => {
+              remoteRace.then((r) => { if (r) resolve({ source: "remote", text: r }); });
+              localRace.then((r) => { if (r) resolve({ source: "local", text: r }); });
+              Promise.all([remoteRace, localRace]).then(() => resolve(null));
+            },
+          );
+
+          if (raceResult) {
+            winner = raceResult.source;
+            debugLog(`[Pipeline] Race won by: ${winner}`);
+            await updateSessionTranscript(sessionId, raceResult.text);
+            transcribed = true;
+
+            if (winner === "remote" && localTask) {
+              localTask.stop().catch(() => {});
+            }
+            if (winner === "local") {
+              // Remote is still uploading — let it finish silently or it'll error out
+            }
+          }
+        }
+      } else if (!isWav) {
+        // Non-WAV: remote STT only
+        try {
+          const { transcribeRemote } = await import("./remoteStt");
+          const result = await transcribeRemote(session.audioUri);
+          if (result && result.length > 0 && !/^(moog|MooG)+$/i.test(result.trim())) {
+            await updateSessionTranscript(sessionId, result);
+            transcribed = true;
+            debugLog('[Pipeline] Remote STT succeeded');
+          }
+        } catch (e: any) {
+          debugLog(`[Pipeline] Remote STT failed: ${e?.message || e}`);
+        }
       }
 
-      if (!transcribed && Platform.OS === "android") {
-        const { transcribeWithWhisperAbortable, isWhisperAvailable } =
-          await import("./whisper");
-        if (isWhisperAvailable()) {
-          const task = await transcribeWithWhisperAbortable(session.audioUri);
-          abortFn = task.stop;
-          const { result } = await task.promise;
-          abortFn = null;
-          await updateSessionTranscript(sessionId, result);
-        }
+      if (!transcribed && !isWav) {
+        throw new Error(
+          "PcmRecorder was unavailable for this recording (audio saved as compressed format). " +
+          "Remote STT also failed. Please ensure the app has microphone permission and try again."
+        );
       }
     }
 
@@ -100,17 +177,22 @@ async function runPipeline(sessionId: string): Promise<void> {
     await updateSessionPhase(sessionId, "summarizing");
     notify();
 
-    const { summarize } = await import("./summarization");
-    const result = await summarize(
+    const { summarizeStreaming } = await import("./summarization");
+    const { updateSessionPartialSummary } = await import("./storage");
+    const result = await summarizeStreaming(
       session.transcript,
       session.mode,
       session.createdAt,
       session.endTime || new Date().toISOString(),
+      (chunk) => { updateSessionPartialSummary(sessionId, chunk).catch(() => {}); },
     );
 
+    await updateSessionPartialSummary(sessionId, "");
+    // Attach speakerLabeledTranscript to the summary object for UI/export
+    const summaryWithSpeaker = { ...result.summary, speakerLabeledTranscript: result.speakerLabeledTranscript };
     await updateSessionSummary(
       sessionId,
-      result.summary,
+      summaryWithSpeaker,
       result.courseName,
       result.title,
       session.endTime,
@@ -149,6 +231,7 @@ async function runPipeline(sessionId: string): Promise<void> {
     abortFn = null;
     notify();
   } catch (e: any) {
+    debugLog(`[Pipeline] ERROR: ${e?.message || e}`);
     await updateSessionPhase(sessionId, "failed", e?.message);
     currentSessionId = null;
     abortFn = null;

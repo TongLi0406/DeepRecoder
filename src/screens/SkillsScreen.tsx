@@ -15,9 +15,11 @@ import {
   CATEGORY_LABELS,
 } from "../services/skills";
 import { quickConsolidation } from "../services/consolidation";
+import { skillsToHtml, skillsToMarkdown } from "../services/export";
 
 export default function SkillsScreen() {
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [candidateCount, setCandidateCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [consolidating, setConsolidating] = useState(false);
 
@@ -25,12 +27,50 @@ export default function SkillsScreen() {
     setLoading(true);
     const all = await getAllSkills();
     setSkills(all);
+    const candidates = await findConsolidationCandidates(all, 0.70);
+    setCandidateCount(candidates.length);
     setLoading(false);
   }, []);
 
   useEffect(() => {
     loadSkills();
   }, [loadSkills]);
+
+  const handleExport = useCallback(() => {
+    if (skills.length === 0) return;
+    Alert.alert("Export Skills", "Choose format:", [
+      {
+        text: "Markdown",
+        onPress: async () => {
+          try {
+            const { writeAsStringAsync, documentDirectory } = await import("expo-file-system/legacy");
+            const { shareAsync } = await import("expo-sharing");
+            const md = skillsToMarkdown(skills);
+            const fileUri = `${documentDirectory}skills_summary.md`;
+            await writeAsStringAsync(fileUri, md, { encoding: "utf8" });
+            await shareAsync(fileUri, { mimeType: "text/markdown" });
+          } catch (e: any) {
+            Alert.alert("Export failed", e.message);
+          }
+        },
+      },
+      {
+        text: "PDF",
+        onPress: async () => {
+          try {
+            const { printToFileAsync } = await import("expo-print");
+            const { shareAsync } = await import("expo-sharing");
+            const html = skillsToHtml(skills);
+            const file = await printToFileAsync({ html, base64: false });
+            await shareAsync(file.uri, { mimeType: "application/pdf" });
+          } catch (e: any) {
+            Alert.alert("Export failed", e.message);
+          }
+        },
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }, [skills]);
 
   const handleConsolidate = useCallback(async () => {
     setConsolidating(true);
@@ -49,8 +89,6 @@ export default function SkillsScreen() {
     }
   }, [loadSkills]);
 
-  const candidateCount = findConsolidationCandidates(skills, 0.70).length;
-
   if (loading) {
     return (
       <View style={styles.center}>
@@ -66,6 +104,11 @@ export default function SkillsScreen() {
         <Text style={styles.subtitle}>
           跨会话提炼的解题方法、决策模式与沟通技巧 · {skills.length} 条
         </Text>
+        {skills.length > 0 && (
+          <TouchableOpacity style={styles.exportButton} onPress={handleExport}>
+            <Text style={styles.exportButtonText}>Export</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {candidateCount > 0 && (
@@ -131,6 +174,16 @@ const styles = StyleSheet.create({
   header: { padding: 24, paddingTop: 60, paddingBottom: 12 },
   title: { fontSize: 32, fontWeight: "700", color: "#1A1A1A" },
   subtitle: { fontSize: 14, color: "#5F6368", marginTop: 4 },
+  exportButton: {
+    marginTop: 12,
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: "#1A73E8",
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
+  exportButtonText: { color: "#1A73E8", fontSize: 13, fontWeight: "500" },
   consolidateButton: {
     marginHorizontal: 24,
     marginBottom: 16,
