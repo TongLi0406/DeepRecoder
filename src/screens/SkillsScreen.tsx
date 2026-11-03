@@ -6,8 +6,8 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
 } from "react-native";
+import { useNavigation } from "@react-navigation/native";
 import type { Skill, ConsolidationResult } from "../types";
 import {
   getAllSkills,
@@ -15,61 +15,44 @@ import {
   CATEGORY_LABELS,
 } from "../services/skills";
 import { quickConsolidation } from "../services/consolidation";
-import { skillsToHtml, skillsToMarkdown } from "../services/export";
+import { exportDocument, skillsToHtml, skillsToMarkdown } from "../services/export";
+import { Download, FileText, Layers, Workflow } from "lucide-react-native";
+import { colors, fonts, IconButton, PageEntrance } from "../ui";
 
 export default function SkillsScreen() {
+  const navigation = useNavigation();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [candidateCount, setCandidateCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [consolidating, setConsolidating] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [feedback, setFeedback] = useState("");
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
-    const all = await getAllSkills();
-    setSkills(all);
-    const candidates = await findConsolidationCandidates(all, 0.70);
-    setCandidateCount(candidates.length);
-    setLoading(false);
+    try {
+      const all = await getAllSkills();
+      setSkills(all);
+      const candidates = await findConsolidationCandidates(all, 0.70);
+      setCandidateCount(candidates.length);
+    } catch { setFeedback("Could not load skills."); }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
-    loadSkills();
-  }, [loadSkills]);
+    void loadSkills();
+    return navigation.addListener("focus", loadSkills);
+  }, [navigation, loadSkills]);
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async (format: "pdf" | "markdown") => {
     if (skills.length === 0) return;
-    Alert.alert("Export Skills", "Choose format:", [
-      {
-        text: "Markdown",
-        onPress: async () => {
-          try {
-            const { writeAsStringAsync, documentDirectory } = await import("expo-file-system/legacy");
-            const { shareAsync } = await import("expo-sharing");
-            const md = skillsToMarkdown(skills);
-            const fileUri = `${documentDirectory}skills_summary.md`;
-            await writeAsStringAsync(fileUri, md, { encoding: "utf8" });
-            await shareAsync(fileUri, { mimeType: "text/markdown" });
-          } catch (e: any) {
-            Alert.alert("Export failed", e.message);
-          }
-        },
-      },
-      {
-        text: "PDF",
-        onPress: async () => {
-          try {
-            const { printToFileAsync } = await import("expo-print");
-            const { shareAsync } = await import("expo-sharing");
-            const html = skillsToHtml(skills);
-            const file = await printToFileAsync({ html, base64: false });
-            await shareAsync(file.uri, { mimeType: "application/pdf" });
-          } catch (e: any) {
-            Alert.alert("Export failed", e.message);
-          }
-        },
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
+    setExporting(true); setFeedback("");
+    try {
+      await exportDocument(format, "skills_summary", format === "pdf" ? skillsToHtml(skills) : skillsToMarkdown(skills));
+      setExportOpen(false);
+    } catch (error: any) { setFeedback(error.message ?? "Export failed."); }
+    finally { setExporting(false); }
   }, [skills]);
 
   const handleConsolidate = useCallback(async () => {
@@ -80,10 +63,10 @@ export default function SkillsScreen() {
         result.merged.length > 0
           ? `Merged ${result.merged.length} skill pairs. ${result.skipped.length} skipped.`
           : "No skills to merge yet. Record more sessions to build your skill library.";
-      Alert.alert("Consolidation Complete", msg);
+      setFeedback(msg);
       await loadSkills();
     } catch (e: any) {
-      Alert.alert("Error", e.message ?? "Consolidation failed");
+      setFeedback(e.message ?? "Consolidation failed");
     } finally {
       setConsolidating(false);
     }
@@ -92,36 +75,40 @@ export default function SkillsScreen() {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#1A73E8" />
+        <ActivityIndicator size="small" color={colors.accent} />
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <PageEntrance style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Skills Summary</Text>
-        <Text style={styles.subtitle}>
-          跨会话提炼的解题方法、决策模式与沟通技巧 · {skills.length} 条
-        </Text>
+        <Text style={styles.subtitle}>{skills.length} skills</Text>
         {skills.length > 0 && (
-          <TouchableOpacity style={styles.exportButton} onPress={handleExport}>
-            <Text style={styles.exportButtonText}>Export</Text>
-          </TouchableOpacity>
+          <IconButton icon={Download} label="Export Skills" disabled={exporting} onPress={() => setExportOpen(value => !value)} />
         )}
       </View>
+      {!!feedback && <Text accessibilityRole="alert" style={styles.feedback}>{feedback}</Text>}
+      {exportOpen && <View style={styles.exportOptions}>
+        {(["pdf", "markdown"] as const).map(format => <TouchableOpacity key={format} accessibilityRole="button" disabled={exporting}
+          onPress={() => void handleExport(format)} style={styles.exportOption}>
+          <FileText size={18} color={colors.accent} /><Text style={styles.subtitle}>{format === "pdf" ? "PDF" : "Markdown"}</Text>
+        </TouchableOpacity>)}
+      </View>}
 
       {candidateCount > 0 && (
         <TouchableOpacity
           style={[styles.consolidateButton, consolidating && styles.consolidateButtonDisabled]}
           onPress={handleConsolidate}
           disabled={consolidating}
+          accessibilityRole="button"
         >
+          <Workflow size={18} color={colors.surface} />
           {consolidating ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
             <Text style={styles.consolidateButtonText}>
-              Run Consolidation ({candidateCount} candidates)
+              Consolidate ({candidateCount})
             </Text>
           )}
         </TouchableOpacity>
@@ -129,9 +116,9 @@ export default function SkillsScreen() {
 
       {skills.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={styles.emptyIcon}>🧩</Text>
+          <Layers size={32} color={colors.muted} strokeWidth={1.3} />
           <Text style={styles.emptyText}>
-            暂无已总结 Skill。录制并处理会话后自动提取。
+            No skills yet
           </Text>
         </View>
       ) : (
@@ -164,16 +151,19 @@ export default function SkillsScreen() {
           )}
         />
       )}
-    </View>
+    </PageEntrance>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFFFFF" },
+  feedback: { fontSize: 13, fontFamily: fonts.body, color: colors.accent, marginHorizontal: 24, marginBottom: 16 },
+  exportOptions: { flexDirection: "row", gap: 12, marginHorizontal: 24, marginBottom: 12 },
+  exportOption: { flex: 1, minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8 },
+  container: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
-  header: { padding: 24, paddingTop: 60, paddingBottom: 12 },
+  header: { paddingHorizontal: 24, paddingBottom: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   title: { fontSize: 32, fontWeight: "700", color: "#1A1A1A" },
-  subtitle: { fontSize: 14, color: "#5F6368", marginTop: 4 },
+  subtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.muted },
   exportButton: {
     marginTop: 12,
     alignSelf: "flex-start",
@@ -187,8 +177,9 @@ const styles = StyleSheet.create({
   consolidateButton: {
     marginHorizontal: 24,
     marginBottom: 16,
-    backgroundColor: "#1A73E8",
-    borderRadius: 10,
+    backgroundColor: colors.accent,
+    borderRadius: 8,
+    flexDirection: "row", gap: 10, justifyContent: "center",
     paddingVertical: 14,
     alignItems: "center",
   },
@@ -196,10 +187,8 @@ const styles = StyleSheet.create({
   consolidateButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
   list: { paddingHorizontal: 24, paddingBottom: 40 },
   skillCard: {
-    backgroundColor: "#F8F9FA",
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 10,
+    borderBottomWidth: 1, borderBottomColor: colors.line,
+    paddingVertical: 20,
   },
   skillHeader: {
     flexDirection: "row",
@@ -207,19 +196,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 6,
   },
-  skillName: { fontSize: 16, fontWeight: "600", color: "#1A1A1A", flex: 1 },
+  skillName: { fontSize: 16, fontFamily: fonts.strong, color: colors.text, flex: 1 },
   badge: {
-    backgroundColor: "#E8F0FE",
+    backgroundColor: colors.soft, maxWidth: "45%",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
   },
-  badgeText: { fontSize: 11, color: "#1A73E8", fontWeight: "500" },
-  skillDesc: { fontSize: 13, color: "#5F6368", lineHeight: 18, marginBottom: 8 },
-  skillMeta: { flexDirection: "row", justifyContent: "space-between" },
-  metaText: { fontSize: 12, color: "#9AA0A6" },
-  mergedText: { fontSize: 12, color: "#1A73E8" },
-  empty: { flex: 1, justifyContent: "center", alignItems: "center", padding: 40 },
+  badgeText: { fontSize: 11, color: colors.accent, fontFamily: fonts.body },
+  skillDesc: { fontSize: 14, fontFamily: fonts.body, color: colors.muted, lineHeight: 22, marginBottom: 12 },
+  skillMeta: { flexDirection: "row", flexWrap: "wrap", gap: 6, justifyContent: "space-between" },
+  metaText: { fontSize: 12, fontFamily: fonts.body, color: colors.muted },
+  mergedText: { fontSize: 12, fontFamily: fonts.body, color: colors.accent },
+  empty: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 14 },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyText: { fontSize: 15, color: "#5F6368", textAlign: "center", lineHeight: 22 },
+  emptyText: { fontSize: 18, fontFamily: fonts.strong, color: colors.text, textAlign: "center", lineHeight: 26 },
 });

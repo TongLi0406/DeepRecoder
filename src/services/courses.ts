@@ -75,11 +75,13 @@ export async function findOrCreateCourse(
 
 // ─── Course History Grouping ───
 
+import type { SessionPhase } from "../types";
+
 export interface CourseGroup {
   courseName: string;
   sessionCount: number;
   lastSessionDate: string;
-  sessions: { id: string; date: string; topic: string }[];
+  sessions: { id: string; date: string; topic: string; phase?: SessionPhase }[];
 }
 
 export async function getCourseGroups(
@@ -88,6 +90,7 @@ export async function getCourseGroups(
     courseName?: string;
     createdAt: string;
     summary?: any;
+    phase?: SessionPhase;
   }[],
 ): Promise<CourseGroup[]> {
   const map = new Map<string, CourseGroup>();
@@ -107,6 +110,7 @@ export async function getCourseGroups(
     group.sessions.push({
       id: s.id,
       date: s.createdAt,
+      phase: s.phase,
       topic: (s as any).title ?? s.summary?.topic ?? s.summary?.title ?? "",
     });
     if (s.createdAt > group.lastSessionDate) {

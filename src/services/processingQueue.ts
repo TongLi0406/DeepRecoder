@@ -1,17 +1,22 @@
-import { Platform } from "react-native";
 import {
   getSessionById,
   updateSessionPhase,
   updateSessionTranscript,
   updateSessionSummary,
   updateSessionEmbeddingMethod,
+  getAllSessions,
+  getProcessingCheckpoint,
+  saveProcessingCheckpoint,
+  updateSessionPartialSummary,
 } from "./storage";
 import { debugLog } from "./debug";
+import { checkAbort } from "./llmContext";
 
 type ProcessingPhase = "transcribing" | "summarizing" | "indexing" | "extracting" | "done" | "failed" | "queued";
 
 let currentSessionId: string | null = null;
 let abortFn: (() => Promise<void>) | null = null;
+let controller: AbortController | null = null;
 let pendingQueue: string[] = [];
 let listeners = new Set<() => void>();
 
@@ -38,7 +43,10 @@ export function getQueueState(): {
   };
 }
 
-export async function abortProcessing(): Promise<void> {
+export async function abortProcessing(sessionId?: string): Promise<void> {
+  if (sessionId) pendingQueue = pendingQueue.filter(id => id !== sessionId);
+  if (sessionId && currentSessionId !== sessionId) { notify(); return; }
+  controller?.abort();
   if (abortFn) {
     try { await abortFn(); } catch {}
     abortFn = null;
@@ -47,200 +55,85 @@ export async function abortProcessing(): Promise<void> {
 
 async function runPipeline(sessionId: string): Promise<void> {
   currentSessionId = sessionId;
+  const activeController = new AbortController();
+  controller = activeController;
+  const signal = activeController.signal;
   notify();
 
   try {
-    debugLog(`[Pipeline] Starting for session ${sessionId.slice(0, 8)}...`);
-
-    // ── Stage 1: STT ──
     let session = await getSessionById(sessionId);
-    if (!session || !session.audioUri) {
-      throw new Error("Session or audio not found");
-    }
-
+    if (!session || session.phase === "done") return;
+    checkAbort(signal);
     if (!session.transcript) {
-      debugLog('[Pipeline] Stage 1: Transcribing...');
+      if (!session.audioUri) throw new Error("Audio not found; saved results retained");
       await updateSessionPhase(sessionId, "transcribing");
       notify();
-
-      // ── Stage 1: Remote + Local race (WAV), or Remote-only (non-WAV) ──
-      let transcribed = false;
-      const isWav = session.audioUri.toLowerCase().endsWith(".wav");
-
-      // ── TEST: Remote-only mode (local Whisper temporarily disabled) ──
-      const REMOTE_ONLY = true;
-
-      if (isWav && Platform.OS === "android") {
-        let winner: string | null = null;
-
-        if (REMOTE_ONLY) {
-          // Remote-only test: skip local Whisper entirely
-          try {
-            const { transcribeRemote } = await import("./remoteStt");
-            const result = await transcribeRemote(session.audioUri);
-            if (result && result.length > 0 && !/^(moog|MooG)+$/i.test(result.trim())) {
-              await updateSessionTranscript(sessionId, result);
-              transcribed = true;
-              winner = "remote";
-              debugLog(`[Pipeline] Remote-only: STT succeeded, ${result.length} chars`);
-            }
-          } catch (e: any) {
-            debugLog(`[Pipeline] Remote-only: STT failed — ${e?.message || e}`);
-          }
-        } else {
-          // Race remote STT against local Whisper — use whichever finishes first
-          let localTask: { stop: () => Promise<void>; promise: Promise<{ result: string }> } | null = null;
-
-          const remoteRace = (async () => {
-            try {
-              const { transcribeRemote } = await import("./remoteStt");
-              const result = await transcribeRemote(session.audioUri);
-              if (result && result.length > 0 && !/^(moog|MooG)+$/i.test(result.trim())) {
-                return result;
-              }
-            } catch (e: any) {
-              debugLog(`[Pipeline] Remote STT lost race: ${e?.message || e}`);
-            }
-            return null;
-          })();
-
-          const localRace = (async () => {
-            try {
-              const { transcribeWithWhisperAbortable, isWhisperAvailable } =
-                await import("./whisper");
-              if (!isWhisperAvailable()) return null;
-              localTask = await transcribeWithWhisperAbortable(session.audioUri);
-              const { result } = await localTask.promise;
-              if (result && !/^(moog|MooG)+$/i.test(result.trim())) {
-                return result;
-              }
-            } catch (e: any) {
-              debugLog(`[Pipeline] Local Whisper lost race: ${e?.message || e}`);
-            }
-            return null;
-          })();
-
-          // Race: first non-null result wins. If both return null, fall through.
-          const raceResult = await new Promise<{ source: string; text: string } | null>(
-            (resolve) => {
-              remoteRace.then((r) => { if (r) resolve({ source: "remote", text: r }); });
-              localRace.then((r) => { if (r) resolve({ source: "local", text: r }); });
-              Promise.all([remoteRace, localRace]).then(() => resolve(null));
-            },
-          );
-
-          if (raceResult) {
-            winner = raceResult.source;
-            debugLog(`[Pipeline] Race won by: ${winner}`);
-            await updateSessionTranscript(sessionId, raceResult.text);
-            transcribed = true;
-
-            if (winner === "remote" && localTask) {
-              localTask.stop().catch(() => {});
-            }
-            if (winner === "local") {
-              // Remote is still uploading — let it finish silently or it'll error out
-            }
-          }
-        }
-      } else if (!isWav) {
-        // Non-WAV: remote STT only
-        try {
-          const { transcribeRemote } = await import("./remoteStt");
-          const result = await transcribeRemote(session.audioUri);
-          if (result && result.length > 0 && !/^(moog|MooG)+$/i.test(result.trim())) {
-            await updateSessionTranscript(sessionId, result);
-            transcribed = true;
-            debugLog('[Pipeline] Remote STT succeeded');
-          }
-        } catch (e: any) {
-          debugLog(`[Pipeline] Remote STT failed: ${e?.message || e}`);
-        }
+      let text: string;
+      try {
+        const { transcribeRemote } = await import("./remoteStt");
+        text = await transcribeRemote(session.audioUri, signal, sessionId);
+      } catch (remoteError) {
+        checkAbort(signal);
+        const { transcribeWithWhisperAbortable, isWhisperAvailable } = await import("./whisper");
+        if (!session.audioUri.toLowerCase().endsWith(".wav") || !isWhisperAvailable()) throw remoteError;
+        const task = await transcribeWithWhisperAbortable(session.audioUri);
+        abortFn = task.stop;
+        if (signal.aborted) await task.stop();
+        try { text = (await task.promise).result; } finally { abortFn = null; }
       }
-
-      if (!transcribed && !isWav) {
-        throw new Error(
-          "PcmRecorder was unavailable for this recording (audio saved as compressed format). " +
-          "Remote STT also failed. Please ensure the app has microphone permission and try again."
-        );
-      }
+      checkAbort(signal);
+      if (!text.trim() || /^(moog)+$/i.test(text.trim())) throw new Error("No usable transcript returned");
+      await updateSessionTranscript(sessionId, text);
     }
-
-    // ── Stage 2: LLM ──
     session = await getSessionById(sessionId);
-    if (!session || !session.transcript) {
-      throw new Error("No transcript available");
+    checkAbort(signal);
+    if (!session?.transcript) throw new Error("No transcript available");
+    if (!session.summary) {
+      await updateSessionPhase(sessionId, "summarizing");
+      notify();
+      const { summarize } = await import("./summarization");
+      const result = await summarize(session.transcript, session.mode, session.createdAt,
+        session.endTime || session.createdAt, undefined, { signal, checkpointScope: sessionId,
+          onProgress: text => { updateSessionPartialSummary(sessionId, text).catch(() => {}); notify(); } });
+      checkAbort(signal);
+      await updateSessionSummary(sessionId, result.summary, result.courseName, result.title, session.endTime);
+      await updateSessionPartialSummary(sessionId, "");
+      session = await getSessionById(sessionId);
     }
-
-    debugLog(`[Pipeline] Transcript (${session.transcript.length} chars): ${session.transcript.slice(0, 200)}...`);
-    debugLog('[Pipeline] Stage 2: Summarizing via LLM...');
-    await updateSessionPhase(sessionId, "summarizing");
-    notify();
-
-    const { summarizeStreaming } = await import("./summarization");
-    const { updateSessionPartialSummary } = await import("./storage");
-    const result = await summarizeStreaming(
-      session.transcript,
-      session.mode,
-      session.createdAt,
-      session.endTime || new Date().toISOString(),
-      (chunk) => { updateSessionPartialSummary(sessionId, chunk).catch(() => {}); },
-    );
-
-    await updateSessionPartialSummary(sessionId, "");
-    // Attach speakerLabeledTranscript to the summary object for UI/export
-    const summaryWithSpeaker = { ...result.summary, speakerLabeledTranscript: result.speakerLabeledTranscript };
-    await updateSessionSummary(
-      sessionId,
-      summaryWithSpeaker,
-      result.courseName,
-      result.title,
-      session.endTime,
-    );
-
-    // ── Stage 3: Vector Indexing ──
-    debugLog('[Pipeline] Stage 3: Vector indexing...');
-    await updateSessionPhase(sessionId, "indexing");
-    notify();
-
-    const { indexSessionSummaries } = await import("./vectorStore");
-    await indexSessionSummaries(sessionId, result.summary);
-
-    const { getLastEmbeddingMethod } = await import("./embedding");
-    const embMethod = getLastEmbeddingMethod();
-    if (embMethod) {
-      await updateSessionEmbeddingMethod(sessionId, embMethod);
+    if (!session?.summary || !session.transcript) throw new Error("Saved summary unavailable");
+    const summaryInput = JSON.stringify(session.summary);
+    if (!await getProcessingCheckpoint(sessionId, "index-summary-v2", summaryInput)) {
+      await updateSessionPhase(sessionId, "indexing");
+      notify();
+      const { indexSessionSummaries } = await import("./vectorStore");
+      await indexSessionSummaries(sessionId, session.summary, signal);
+      checkAbort(signal);
+      await saveProcessingCheckpoint(sessionId, "index-summary-v2", summaryInput, "done");
+      const { getLastEmbeddingMethod } = await import("./embedding");
+      const method = getLastEmbeddingMethod();
+      if (method) await updateSessionEmbeddingMethod(sessionId, method);
     }
-
-    // ── Stage 4: Skill Extraction ──
-    session = await getSessionById(sessionId);
-    if (session?.transcript) {
+    if (!await getProcessingCheckpoint(sessionId, "extract-skills-v2", session.transcript)) {
       await updateSessionPhase(sessionId, "extracting");
       notify();
-      try {
-        const { extractSkills } = await import("./extraction");
-        const skills = await extractSkills(session.transcript, session.mode, sessionId);
-        debugLog(`[Pipeline] Extracted ${skills.length} skills`);
-      } catch (e: any) {
-        debugLog(`[Pipeline] Skill extraction failed (non-fatal): ${e?.message || e}`);
-      }
+      const { extractSkills } = await import("./extraction");
+      await extractSkills(session.transcript, session.mode, sessionId, undefined, signal);
+      checkAbort(signal);
+      await saveProcessingCheckpoint(sessionId, "extract-skills-v2", session.transcript, "done");
     }
-
+    checkAbort(signal);
     await updateSessionPhase(sessionId, "done");
-    currentSessionId = null;
-    abortFn = null;
-    notify();
   } catch (e: any) {
     debugLog(`[Pipeline] ERROR: ${e?.message || e}`);
-    await updateSessionPhase(sessionId, "failed", e?.message);
+    await updateSessionPhase(sessionId, "failed", signal.aborted
+      ? "Processing cancelled; saved results retained" : e?.message || "Processing failed; saved results retained");
+  } finally {
     currentSessionId = null;
     abortFn = null;
+    controller = null;
     notify();
-  } finally {
-    // Process next in queue
     if (pendingQueue.length > 0) {
       const nextId = pendingQueue.shift()!;
-      debugLog(`[Pipeline] Dequeuing next session ${nextId.slice(0, 8)}...`);
       runPipeline(nextId).catch(() => {});
     }
   }
@@ -255,7 +148,6 @@ export function startProcessing(sessionId: string): void {
   if (currentSessionId) {
     // Busy — add to queue
     pendingQueue.push(sessionId);
-    updateSessionPhase(sessionId, "queued").catch(() => {});
     debugLog(`[Pipeline] Queued ${sessionId.slice(0, 8)} (queue: ${pendingQueue.length})`);
     notify();
   } else {
@@ -264,29 +156,11 @@ export function startProcessing(sessionId: string): void {
 }
 
 export async function resumeStuckTasks(): Promise<void> {
-  if (currentSessionId) return;
-
-  const { getAllSessions } = await import("./storage");
   const sessions = await getAllSessions();
-  const stuck = sessions.find(
-    (s) =>
-      s.phase === "transcribing" ||
-      s.phase === "summarizing" ||
-      s.phase === "indexing" ||
-      s.phase === "extracting" ||
-      s.phase === "queued" ||
-      (s.phase === "recording" && s.audioUri),
-  );
-  if (stuck) {
-    if (stuck.phase === "queued") {
-      pendingQueue.push(stuck.id);
+  const phases = new Set(["transcribing", "summarizing", "indexing", "extracting", "queued"]);
+  for (const session of sessions.slice().reverse()) {
+    if (phases.has(session.phase) || (session.phase === "recording" && session.audioUri)) {
+      startProcessing(session.id);
     }
-    runPipeline(stuck.id).catch(() => {});
-  }
-
-  // Process any remaining queued sessions
-  while (pendingQueue.length > 0 && !currentSessionId) {
-    const nextId = pendingQueue.shift()!;
-    runPipeline(nextId).catch(() => {});
   }
 }

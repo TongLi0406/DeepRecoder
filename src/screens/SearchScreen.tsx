@@ -15,6 +15,8 @@ import { askAgent, type AgentResponse, type MatchedSkillGroup } from "../service
 import { getApiKey } from "../services/api";
 import type { Skill } from "../types";
 import { CATEGORY_LABELS } from "../services/skills";
+import { MessagesSquare, Send } from "lucide-react-native";
+import { colors, fonts, IconButton, PageEntrance, ScreenHeader, uiStyles } from "../ui";
 
 interface Message {
   role: "user" | "agent";
@@ -25,18 +27,16 @@ interface Message {
 }
 
 export default function SearchScreen() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "agent",
-      content:
-        "Ask me anything about your recorded meetings and classes. I'll search your knowledge base for answers.",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const flatListRef = useRef<FlatList>(null);
 
   const showSkillDetail = useCallback((skill: Skill) => {
+    if (Platform.OS === "web") {
+      window.alert(`${skill.name}\n\n${skill.description}\n\n${CATEGORY_LABELS[skill.category] ?? skill.category} · ${skill.sourceSessionIds.length} sessions`);
+      return;
+    }
     Alert.alert(
       skill.name,
       `${skill.description}\n\n分类：${CATEGORY_LABELS[skill.category] ?? skill.category}\n来源会话：${skill.sourceSessionIds.length} 个`,
@@ -79,21 +79,20 @@ export default function SearchScreen() {
   }, [input, loading]);
 
   return (
+    <PageEntrance style={uiStyles.page}>
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
-      <View style={styles.header}>
-        <Text style={styles.title}>Ask</Text>
-        <Text style={styles.subtitle}>Ask anything from your knowledge base</Text>
-      </View>
+      <ScreenHeader title="Ask" />
 
       <FlatList
         ref={flatListRef}
         data={messages}
         keyExtractor={(_, i) => String(i)}
         contentContainerStyle={styles.messages}
+        ListEmptyComponent={<View style={styles.empty}><MessagesSquare size={36} strokeWidth={1.3} color={colors.muted} /><Text style={styles.emptyText}>No conversation yet</Text></View>}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
         renderItem={({ item }) => (
           <View
@@ -102,16 +101,17 @@ export default function SearchScreen() {
               item.role === "user" ? styles.userBubble : styles.agentBubble,
             ]}
           >
+            <Text style={styles.speakerLabel}>{item.role === "user" ? "You" : "Answer"}</Text>
             {item.matchedSkillGroup && (
               <View style={styles.skillsSection}>
                 <Text style={styles.skillsTitle}>
-                  📋 相关已总结 Skill
+                  Related skills
                 </Text>
                 <Text style={styles.skillsGroupLabel}>
-                  {item.matchedSkillGroup.group.icon} {item.matchedSkillGroup.group.label}
+                  {item.matchedSkillGroup.group.label}
                 </Text>
                 <View style={styles.skillsRow}>
-                  {item.matchedSkillGroup.skills.map((s) => (
+                  {item.matchedSkillGroup.skills.map((s: { skill: import("../types").Skill }) => (
                     <TouchableOpacity
                       key={s.skill.id}
                       style={styles.skillBadge}
@@ -152,112 +152,105 @@ export default function SearchScreen() {
       <View style={styles.inputBar}>
         <TextInput
           style={styles.input}
-          placeholder="Ask a question..."
-          placeholderTextColor="#9AA0A6"
+          placeholder="Your question"
+          accessibilityLabel="Question"
+          placeholderTextColor={colors.muted}
           value={input}
           onChangeText={setInput}
           onSubmitEditing={handleSend}
           returnKeyType="send"
           editable={!loading}
         />
-        <TouchableOpacity
-          style={[styles.sendButton, !input.trim() && styles.sendButtonDisabled]}
-          onPress={handleSend}
-          disabled={!input.trim() || loading}
-        >
+        <View style={styles.sendControl}>
           {loading ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
+            <ActivityIndicator accessibilityLabel="Generating answer" size="small" color={colors.accent} />
           ) : (
-            <Text style={styles.sendButtonText}>Send</Text>
+            <IconButton icon={Send} label="Send question" onPress={handleSend} disabled={!input.trim()} />
           )}
-        </TouchableOpacity>
+        </View>
       </View>
     </KeyboardAvoidingView>
+    </PageEntrance>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFFFFF" },
-  header: { padding: 24, paddingTop: 60, paddingBottom: 12 },
-  title: { fontSize: 32, fontWeight: "700", color: "#1A1A1A" },
-  subtitle: { fontSize: 14, color: "#5F6368", marginTop: 4 },
-  messages: { paddingHorizontal: 16, paddingBottom: 12 },
+  container: { flex: 1, backgroundColor: colors.background },
+  messages: { paddingHorizontal: 24, paddingBottom: 12, flexGrow: 1 },
+  empty: { flex: 1, justifyContent: "center", alignItems: "center", gap: 16 },
+  emptyText: { fontSize: 16, fontFamily: fonts.body, color: colors.muted },
+  speakerLabel: { fontSize: 11, fontFamily: fonts.strong, color: colors.muted, marginBottom: 8 },
   bubble: {
-    maxWidth: "85%",
-    borderRadius: 16,
+    maxWidth: "100%",
+    borderRadius: 8,
     padding: 14,
-    marginBottom: 10,
+    marginBottom: 16,
   },
   userBubble: {
     alignSelf: "flex-end",
-    backgroundColor: "#1A73E8",
+    backgroundColor: colors.soft,
   },
   agentBubble: {
-    alignSelf: "flex-start",
-    backgroundColor: "#F1F3F4",
+    alignSelf: "stretch",
+    paddingHorizontal: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
   },
-  bubbleText: { fontSize: 15, lineHeight: 22 },
-  userText: { color: "#FFFFFF" },
-  agentText: { color: "#1A1A1A" },
+  bubbleText: { fontSize: 15, fontFamily: fonts.body, lineHeight: 25 },
+  userText: { color: colors.text },
+  agentText: { color: colors.text },
   sources: {
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.1)",
+    borderTopColor: colors.line,
   },
   sourcesTitle: {
     fontSize: 12,
-    fontWeight: "600",
-    color: "rgba(0,0,0,0.5)",
+    fontFamily: fonts.strong,
+    color: colors.muted,
     marginBottom: 6,
   },
   sourceItem: {
     fontSize: 11,
-    color: "rgba(0,0,0,0.4)",
+    fontFamily: fonts.body,
+    color: colors.muted,
     marginBottom: 3,
     lineHeight: 15,
   },
   inputBar: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 12,
-    paddingBottom: 32,
+    padding: 16,
     borderTopWidth: 1,
-    borderTopColor: "#E8EAED",
+    borderTopColor: colors.line,
     gap: 10,
   },
   input: {
-    flex: 1,
+    flex: 1, minWidth: 0,
     borderWidth: 1,
-    borderColor: "#DADCE0",
-    borderRadius: 20,
+    borderColor: colors.line,
+    borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    fontSize: 15,
-    backgroundColor: "#F8F9FA",
+    fontSize: 15, fontFamily: fonts.body, color: colors.text,
+    backgroundColor: colors.surface,
   },
-  sendButton: {
-    backgroundColor: "#1A73E8",
-    borderRadius: 20,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  sendButtonDisabled: { backgroundColor: "#DADCE0" },
-  sendButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
+  sendControl: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   skillsSection: {
     marginBottom: 10,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.08)",
+    borderBottomColor: colors.line,
   },
-  skillsTitle: { fontSize: 12, fontWeight: "600", color: "rgba(0,0,0,0.55)", marginBottom: 4 },
-  skillsGroupLabel: { fontSize: 13, fontWeight: "600", color: "#1A1A1A", marginBottom: 6 },
+  skillsTitle: { fontSize: 12, fontFamily: fonts.strong, color: colors.muted, marginBottom: 4 },
+  skillsGroupLabel: { fontSize: 13, fontFamily: fonts.strong, color: colors.text, marginBottom: 6 },
   skillsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   skillBadge: {
-    backgroundColor: "#E8F0FE",
+    backgroundColor: colors.soft,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 12,
+    borderRadius: 6,
   },
-  skillBadgeText: { fontSize: 12, color: "#1A73E8", fontWeight: "500" },
+  skillBadgeText: { fontSize: 12, color: colors.accent, fontFamily: fonts.strong },
 });

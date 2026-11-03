@@ -1,0 +1,38 @@
+- generic [ref=f2e122]:
+  - generic [ref=f2e123]:
+    - button "Back" [ref=f2e124] [cursor=pointer]
+    - generic [ref=f2e127]: Settings
+  - generic [ref=f2e130]:
+    - generic [ref=f2e131]: Model
+    - generic [ref=f2e132]: HTTPS endpoint
+    - textbox "HTTPS endpoint" [ref=f2e133]: https://api.deepseek.com/anthropic/v1/messages
+    - generic [ref=f2e134]: Model name
+    - textbox "Model name" [ref=f2e135]: deepseek-v4-pro
+    - generic [ref=f2e136]: Context limit (tokens)
+    - textbox "Context limit in tokens" [ref=f2e137]: "32768"
+    - generic [ref=f2e138]:
+      - radio "Anthropic" [ref=f2e139] [cursor=pointer]
+      - radio "OpenAI" [ref=f2e141] [cursor=pointer]
+    - button "Save model configuration" [ref=f2e144] [cursor=pointer]
+    - generic [ref=f2e149]: API Key
+    - generic [ref=f2e150]: Connect your DeepSeek or Qwen API key. Your key stays on-device and is sent with requests only to the configured model endpoint.
+    - generic [ref=f2e151]:
+      - textbox "Model API key" [ref=f2e152]:
+        - /placeholder: sk-...
+      - button "Show model API key" [ref=f2e153] [cursor=pointer]
+    - generic [ref=f2e157]:
+      - button "Save model API key" [ref=f2e158] [cursor=pointer]
+      - button "Test Connection" [ref=f2e163] [cursor=pointer]
+    - generic [ref=f2e171]: SiliconFlow API Key
+    - generic [ref=f2e172]: Audio transcription uploads recordings to SiliconFlow. Knowledge-base embeddings also send text to SiliconFlow. Diary uploads require separate consent.
+    - generic [ref=f2e173]:
+      - textbox "SiliconFlow API key" [ref=f2e174]:
+        - /placeholder: sk-...
+      - button "Show SiliconFlow API key" [ref=f2e175] [cursor=pointer]
+    - generic [ref=f2e179]:
+      - button "Save SiliconFlow API key" [ref=f2e180] [cursor=pointer]
+      - button "Test Connection" [ref=f2e185] [cursor=pointer]
+    - generic [ref=f2e193]: Data
+    - generic [ref=f2e194]: Audio recordings are stored locally and should be deleted periodically. Structured summaries and knowledge base are kept permanently.
+    - generic [ref=f2e195]: About
+    - generic [ref=f2e196]: Recorder v1.0.0 Local-first meeting & classroom intelligence

@@ -1,4 +1,5 @@
-import { callLLM } from "./api";
+import { callLLM, getModelConfig } from "./api";
+import { splitText, textBytes } from "./llmContext";
 import { generateEmbedding } from "./embedding";
 import { debugLog } from "./debug";
 import {
@@ -91,6 +92,7 @@ export async function askAgent(
   sessionIds?: string[],
   apiKey?: string,
 ): Promise<AgentResponse> {
+  if (!question.trim() || textBytes(question) > 2000) throw new Error("Question must contain 1-2000 UTF-8 bytes");
   // Step 1: Generate query embedding (shared by both searches)
   const qEmb = await generateEmbedding(question);
 
@@ -195,29 +197,34 @@ export async function askAgent(
   }
 
   // Step 4: Build context
-  const sources: string[] = relevant.map(
-    (r) => `[${r.embeddingRow.contentType}] ${r.embeddingRow.contentText}`,
-  );
-
-  const context = relevant
-    .map(
-      (r, i) =>
-        `[${i + 1}] 类型: ${r.embeddingRow.contentType} | 内容: ${r.embeddingRow.contentText}`,
-    )
-    .join("\n");
+  const config = await getModelConfig();
+  let remaining = Math.min(4000, config.contextLimit - textBytes(RAG_SYSTEM) - 2048 - 1024 - textBytes(question) - 2400);
+  if (remaining < 128) throw new Error("Model context is too small for this question");
+  const sources: string[] = [];
+  for (const result of relevant) {
+    const prefix = `[${sources.length + 1}] [${result.embeddingRow.contentType}] `;
+    const available = remaining - textBytes(prefix) - 40;
+    if (available < 128) break;
+    const original = result.embeddingRow.contentText;
+    const excerpt = splitText(original, available)[0] ?? "";
+    const source = prefix + excerpt + (excerpt !== original ? " [节选]" : "");
+    sources.push(source);
+    remaining -= textBytes(source) + 1;
+  }
+  const context = sources.join("\n");
 
   // Session context
   const allSessions = await getAllSessions();
   const sessionMap = new Map(allSessions.map((s) => [s.id, s]));
 
-  const sessionContext = [...new Set(relevant.map((r) => r.embeddingRow.sessionId))]
+  const sessionContext = splitText([...new Set(relevant.map((r) => r.embeddingRow.sessionId))]
     .map((sid) => {
       const s = sessionMap.get(sid);
       if (!s) return "";
       return `会话 ${sid.slice(0, 6)}: ${s.mode} — ${s.courseName ?? "Unknown"}`;
     })
     .filter(Boolean)
-    .join("\n");
+    .join("\n"), 512)[0] ?? "";
 
   // Step 5: Build skill framework for LLM prompt
   let skillFramework = "";
@@ -226,6 +233,7 @@ export async function askAgent(
       (s) => `- [${s.skill.name}] ${s.skill.description}`,
     );
     skillFramework = `\n\n思维框架（${matchedSkillGroup.group.label}）：\n${skillLines.join("\n")}\n\n请参考以上思维框架组织你的回答结构，但事实内容只来自参考资料。`;
+    skillFramework = splitText(skillFramework, 1024)[0] ?? "";
   }
 
   // Step 6: Generate answer
@@ -239,44 +247,11 @@ ${sessionContext}${skillFramework}
 
 请基于参考资料回答。如果答案不在参考资料中，明确说明。附上引用来源。`;
 
-  const raw = await callLLM(RAG_SYSTEM, userMessage, apiKey, 2048, false);
+  const raw = await callLLM(RAG_SYSTEM, userMessage, apiKey, 2048, true);
 
-  const grounded = checkGrounded(raw, sources);
+  const grounded = false;
   debugLog(`[RAG] Answer (${raw.length} chars, grounded=${grounded}): ${raw.slice(0, 150)}...`);
 
   return { answer: raw, sources, grounded, matchedSkillGroup };
 }
 
-function checkGrounded(answer: string, sources: string[]): boolean {
-  const lowerAnswer = answer.toLowerCase();
-
-  if (
-    lowerAnswer.includes("没有找到") ||
-    lowerAnswer.includes("no information") ||
-    lowerAnswer.includes("没有相关信息")
-  ) {
-    return true;
-  }
-
-  const sourceText = sources.join(" ").toLowerCase();
-  const keyTerms = extractKeyTerms(lowerAnswer);
-  if (keyTerms.length === 0) return true;
-
-  let matchedTerms = 0;
-  for (const term of keyTerms) {
-    if (sourceText.includes(term)) matchedTerms++;
-  }
-
-  return matchedTerms / keyTerms.length >= 0.3;
-}
-
-function extractKeyTerms(text: string): string[] {
-  const terms: string[] = [];
-  for (let i = 0; i < text.length - 2; i++) {
-    const sub = text.slice(i, i + 3);
-    if (/[一-鿿]{3}/.test(sub)) {
-      terms.push(sub);
-    }
-  }
-  return [...new Set(terms)].slice(0, 20);
-}

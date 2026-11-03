@@ -1,5 +1,5 @@
 import { Platform } from "react-native";
-import { getAllSessions, updateSessionPhase } from "./storage";
+import { getAllSessions, updateSessionPartialSummary, updateSessionPhase } from "./storage";
 import type { SessionPhase } from "../types";
 
 // ─── Recording Recovery ───
@@ -17,10 +17,18 @@ export async function recoverOrphanRecordings(): Promise<string[]> {
 export async function cleanOrphans(): Promise<void> {
   if (Platform.OS === "web") return;
   try {
+    const sessions = await getAllSessions();
+    const inUse = new Set(
+      sessions
+        .map(item => item.audioUri)
+        .filter(uri => typeof uri === "string" && !!uri),
+    );
     const fs = await import("expo-file-system");
     const dir = new fs.Directory(fs.Paths.cache, "orphan_recordings");
     if (dir.exists) {
       for (const item of dir.list()) {
+        const uri = (item as any)?.uri;
+        if (uri && inUse.has(uri)) continue;
         if (item && typeof (item as any).delete === "function") (item as any).delete();
       }
     }
@@ -33,14 +41,13 @@ export async function recoverInterruptedSessions(): Promise<void> {
   const sessions = await getAllSessions();
 
   for (const session of sessions) {
-    if (session.phase === "transcribing" || session.phase === "summarizing") {
-      await updateSessionPhase(session.id, "recording");
-    }
-    if (session.phase === "recording") {
-      const age = Date.now() - new Date(session.createdAt).getTime();
-      if (age > 86400000) {
-        await updateSessionPhase(session.id, "failed", "Recording abandoned (24h timeout)");
-      }
+    if (
+      session.phase === "transcribing"
+      || session.phase === "summarizing"
+      || session.phase === "indexing"
+      || session.phase === "extracting"
+    ) {
+      await updateSessionPhase(session.id, "queued");
     }
   }
 }
@@ -68,18 +75,24 @@ export async function checkDiskSpace(): Promise<{ ok: boolean; availableMB: numb
     }
     return { ok: true, availableMB };
   } catch {
-    return { ok: true, availableMB: 0 };
+    return { ok: false, availableMB: 0, warning: "Disk space check failed" };
   }
 }
 
 // ─── API Error Helpers ───
 
 export async function savePartialResults(sessionId: string, phase: SessionPhase, partialData: any, error: string): Promise<void> {
+  try {
+    const serialized = typeof partialData === "string" ? partialData : JSON.stringify(partialData ?? {});
+    await updateSessionPartialSummary(sessionId, serialized);
+  } catch {
+    // do not fail phase transition on partial serialization errors
+  }
   await updateSessionPhase(sessionId, phase, error);
 }
 
 export function isCreditExhausted(errorMessage: string): boolean {
-  const indicators = ["insufficient_quota", "rate_limit", "429", "quota exceeded", "余额不足", "充值", "billing", "credit"];
+  const indicators = ["insufficient_quota", "quota exceeded", "余额不足", "充值", "billing", "credit exhausted"];
   return indicators.some((i) => errorMessage.toLowerCase().includes(i));
 }
 

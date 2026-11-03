@@ -1,5 +1,60 @@
 # DeepRecoder — Test Execution Report
 
+## Latest Interface, Diary and Long-Recording Verification
+
+**Date**: 2026-11-03
+**Environment**: Windows, Node 24.15.0, Expo SDK 56; preview at http://localhost:8094
+
+| Check | Result | Coverage / Limit |
+|-------|--------|------------------|
+| Four Node test files | 48 passed, 0 failed | Pipeline 23, audio 10, diary 10, native artifact/source checks 5 |
+| TypeScript | PASS | `node node_modules/typescript/bin/tsc --noEmit`, rerun after Web export |
+| Web export | PASS | `npx --no-install expo export --platform web`; existing whisper.rn export-map fallback warning |
+| Browser layout and navigation | PASS | Desktop 1280x900: 180px sidebar; mobile 390x844: Home, Library, Diary and Settings; 320x740: Ask, input/send and four tabs. Checked controls and horizontal overflow; native capture absent on Web |
+| Interface feedback and motion | PASS | Browser verifies empty-key feedback, navigation/Library selection, disabled/enabled Ask send, visible bounded tooltip and reduced-motion preference. Node checks loop cleanup and navigation animation choices |
+| Summary, deletion and export contracts | PASS | Isolated React/service checks cover conclusions first, expandable original including failed records, retry subscription recovery, guarded removal, independent confirmed deletion, persistence errors, Markdown/PDF/native sharing contracts |
+| Generated diary display | PASS | Mocked React server render verifies content/source visibility and hides stale output |
+| Android build | NOT RUN | No usable JDK/Android toolchain configured in this session |
+| Device capture/power/identity | NOT RUN | Requires Android hardware; no energy or identity-accuracy claim |
+
+Reproduce the regression suite:
+
+```bash
+node --test test-data/pipeline.test.cjs test-data/audio.test.cjs test-data/diary.test.cjs test-data/native-diary.test.cjs
+```
+
+Coverage includes recursive 8K-context reduction, Unicode reconstruction, nonshrinking-output
+rejection, abort propagation, source validation in intermediate/final diary generation,
+queue resumption, idempotent extraction/indexing, retention backlog and consent/identity
+invalidation. Native tests inspect pinned artifact hashes and source contracts; they do
+not execute Android service code or establish Kotlin binary compatibility.
+
+Record page ownership regression covers not-started, rejected-start, active, paused,
+failed-stop, successful-stop and explicit auto-start states. The page now cleans up only a capture it
+successfully started; visiting/leaving Record no longer stops shared voice enrollment.
+
+UI follow-up fixes include real hover/keyboard tooltips with bounded width/lines,
+the sidebar's default minimum-width override, storage failures reaching Settings without
+changing cached credentials, failed-record retry subscriptions, and shared navigation-removal
+confirmation. Library load/delete failures remain visible and do not leave permanent loading.
+
+Expo's default `allowJs` initially included the exported minified bundle in TypeScript checking
+and caused a compiler stack overflow. Excluding `dist` while retaining the standard Expo
+exclusions fixes the root cause; default-stack type checking passes after export.
+
+The browser logged failed DeepSeek model-discovery requests (`ERR_CONNECTION_RESET`) and
+existing react-native-web shadow/pointerEvents deprecation warnings. No UI rendering exception
+was observed. Browser checks used empty local data; no microphone, live STT/LLM processing,
+device sharing or real PDF print operation was exercised. Contentful Summary/Diary and export
+assertions use isolated mocks, not end-to-end provider or native execution.
+
+Open gates: Android compilation; microphone permission/foreground-service launch;
+lockscreen/notification stop, process death and audio interruptions; battery/thermal/disk
+guards; elapsed-day power measurements; noisy, short and overlapping-speaker accuracy.
+Do not release the diary feature as validated until these gates are completed.
+
+## Historical Baseline
+
 **Date**: 2026-06-17
 **Tester**: MiMoCode (automated code review + static analysis)
 **Environment**: Web (WSL2, `http://172.22.198.170:8081`)

@@ -1,0 +1,238 @@
+[    4179ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:8094/index.ts.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable:2105
+[    4247ms] [LOG] Running application "main" with appParams:
+ {rootTag: #root, hydrate: undefined} 
+Development-level warnings: ON.
+Performance optimizations: OFF. @ http://localhost:8094/index.ts.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable:2105
+[    4338ms] [WARNING] props.pointerEvents is deprecated. Use style.pointerEvents @ http://localhost:8094/index.ts.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable:2105
+[    4696ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ https://api.deepseek.com/anthropic/v1/models:0
+[  471863ms] SyntaxError: C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx: Unexpected token, expected "}" (39:9)
+
+  37 |         tabBarItemStyle: wide ? { minHeight: 52, borderRadius: 8, marginBottom: 6 } : undefined,
+  38 |         tabBarLabelStyle: { fontSize: 12, fontFamily: fonts.strong },
+> 39 |       };})}
+     |          ^
+  40 |     >
+  41 |       <Tab.Screen
+  42 |         name="Home"
+[  478748ms] SyntaxError: C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx: Unexpected token, expected "}" (39:9)
+
+  37 |         tabBarItemStyle: wide ? { minHeight: 52, borderRadius: 8, marginBottom: 6 } : undefined,
+  38 |         tabBarLabelStyle: { fontSize: 12, fontFamily: fonts.strong },
+> 39 |       };})}
+     |          ^
+  40 |     >
+  41 |       <Tab.Screen
+  42 |         name="Home"
+[  482223ms] SyntaxError: C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx: Unexpected token, expected "}" (39:9)
+
+  37 |         tabBarItemStyle: wide ? { minHeight: 52, borderRadius: 8, marginBottom: 6 } : undefined,
+  38 |         tabBarLabelStyle: { fontSize: 12, fontFamily: fonts.strong },
+> 39 |       };})}
+     |          ^
+  40 |     >
+  41 |       <Tab.Screen
+  42 |         name="Home"
+[  487928ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  491400ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  495757ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  499325ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  553864ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  584294ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  631092ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  643667ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  674252ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  728751ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  777363ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  827902ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  835209ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  843959ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  846482ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  904272ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,
+[  969648ms] Metro has encountered an error: While trying to resolve module `lucide-react-native` from file `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\src\navigation\AppNavigator.tsx`, the package `C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\package.json` was successfully found. However, this package itself specifies a `main` module field that could not be resolved (`C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs`. Indeed, none of these files exist:
+
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css)
+  * C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\lucide-react-native\dist\esm\lucide-react-native.mjs\index(.web.ts|.ts|.web.tsx|.tsx|.web.mjs|.mjs|.web.js|.js|.web.jsx|.jsx|.web.json|.json|.web.cjs|.cjs|.web.scss|.scss|.web.sass|.sass|.web.css|.css): C:\Users\jjtqyh\OneDrive - Aptiv\Documents\AI\DeepRecoder-master\node_modules\metro\src\node-haste\DependencyGraph.js (278:17)
+
+  276 |         }
+  277 |         if (error instanceof _metroResolver.InvalidPackageError) {
+> 278 |           throw new _metroCore.PackageResolutionError({
+      |                 ^
+  279 |             packageError: error,
+  280 |             originModulePath,
+  281 |             targetModuleName: to,

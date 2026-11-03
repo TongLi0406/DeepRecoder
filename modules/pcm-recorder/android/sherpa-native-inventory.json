@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-11-03T03:40:34.596Z",
+  "version": "v1.13.7",
+  "files": [
+    {
+      "outPath": "C:\\Users\\jjtqyh\\OneDrive - Aptiv\\Documents\\AI\\DeepRecoder-master\\modules\\pcm-recorder\\android\\libs\\sherpa-onnx-1.13.7.aar",
+      "hash": "c4ef49e309f24fcee5c106b8a279481aaecaabb078cd37b2cd6e9a62cc8a73c8",
+      "size": 49113869
+    },
+    {
+      "outPath": "C:\\Users\\jjtqyh\\OneDrive - Aptiv\\Documents\\AI\\DeepRecoder-master\\modules\\pcm-recorder\\android\\src\\main\\assets\\sherpa\\silero_vad.onnx",
+      "hash": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "size": 643854
+    },
+    {
+      "outPath": "C:\\Users\\jjtqyh\\OneDrive - Aptiv\\Documents\\AI\\DeepRecoder-master\\modules\\pcm-recorder\\android\\src\\main\\assets\\sherpa\\3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx",
+      "hash": "1a331345f04805badbb495c775a6ddffcdd1a732567d5ec8b3d5749e3c7a5e4b",
+      "size": 39593761
+    },
+    {
+      "outPath": "C:\\Users\\jjtqyh\\OneDrive - Aptiv\\Documents\\AI\\DeepRecoder-master\\modules\\pcm-recorder\\android\\src\\main\\assets\\sherpa-license\\sherpa-onnx-LICENSE",
+      "hash": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "size": 11358
+    }
+  ]
+}

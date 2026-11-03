@@ -20,13 +20,14 @@ function memQuery<T extends Record<string, any>>(
 
 // ─── SQLite (Native) ───
 
-let db: any = null;
+let db: Promise<any> | null = null;
 
 async function getNativeDb(): Promise<any> {
   if (!db) {
+    db = (async () => {
     const SQLite = await import("expo-sqlite");
-    db = await SQLite.openDatabaseAsync("recorder.db");
-    await db.execAsync(`
+    const connection = await SQLite.openDatabaseAsync("recorder.db");
+    await connection.execAsync(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         created_at TEXT NOT NULL,
@@ -42,12 +43,65 @@ async function getNativeDb(): Promise<any> {
         embedding_method TEXT,
         error TEXT
       );
+      CREATE TABLE IF NOT EXISTS processing_checkpoints (
+        scope TEXT NOT NULL, operation TEXT NOT NULL, input TEXT NOT NULL, result TEXT NOT NULL,
+        PRIMARY KEY (scope, operation, input)
+      );
     `);
 
     // Migration: add embedding_method column if upgrading from older schema
-    try { await db.execAsync('ALTER TABLE sessions ADD COLUMN embedding_method TEXT'); } catch {}
+    try { await connection.execAsync('ALTER TABLE sessions ADD COLUMN embedding_method TEXT'); } catch {}
+    try { await connection.execAsync('ALTER TABLE sessions ADD COLUMN partial_summary TEXT'); } catch {}
+    return connection;
+    })().catch(error => { db = null; throw error; });
   }
   return db;
+}
+
+export async function getProcessingCheckpoint(scope: string, operation: string, input: string): Promise<string | null> {
+  if (Platform.OS === "web") return memoryStore.get(JSON.stringify([scope, operation, input])) ?? null;
+  const connection = await getNativeDb();
+  const row = await connection.getFirstAsync(
+    "SELECT result FROM processing_checkpoints WHERE scope = ? AND operation = ? AND input = ?", scope, operation, input,
+  );
+  return row?.result ?? null;
+}
+
+export async function saveProcessingCheckpoint(scope: string, operation: string, input: string, result: string): Promise<void> {
+  if (Platform.OS === "web") { memoryStore.set(JSON.stringify([scope, operation, input]), result); return; }
+  const connection = await getNativeDb();
+  await connection.runAsync("INSERT OR REPLACE INTO processing_checkpoints (scope, operation, input, result) VALUES (?, ?, ?, ?)",
+    scope, operation, input, result);
+}
+
+export async function deleteProcessingCheckpoints(scope: string, prefix = false): Promise<void> {
+  if (Platform.OS === "web") {
+    for (const key of memoryStore.keys()) {
+      try {
+        const parts = JSON.parse(key);
+        if (Array.isArray(parts) && typeof parts[0] === "string" &&
+            (prefix ? parts[0].startsWith(scope) : parts[0] === scope)) memoryStore.delete(key);
+      } catch {}
+    }
+    return;
+  }
+  const connection = await getNativeDb();
+  await connection.runAsync(prefix
+    ? "DELETE FROM processing_checkpoints WHERE instr(scope, ?) = 1"
+    : "DELETE FROM processing_checkpoints WHERE scope = ?", scope);
+}
+
+export async function updateSessionPartialSummary(id: string, text: string): Promise<void> {
+  if (Platform.OS === "web") { memoryStore.set("partial:" + id, text); return; }
+  const connection = await getNativeDb();
+  await connection.runAsync("UPDATE sessions SET partial_summary = ? WHERE id = ?", text, id);
+}
+
+export async function getSessionPartialSummary(id: string): Promise<string> {
+  if (Platform.OS === "web") return memoryStore.get("partial:" + id) ?? "";
+  const connection = await getNativeDb();
+  const row = await connection.getFirstAsync("SELECT partial_summary FROM sessions WHERE id = ?", id);
+  return row?.partial_summary ?? "";
 }
 
 // ─── Public API ───
@@ -91,7 +145,7 @@ export async function updateSessionPhase(
   if (Platform.OS === "web") {
     const sessions: Session[] = memoryStore.get("sessions") ?? [];
     const s = sessions.find((r) => r.id === id);
-    if (s) { s.phase = phase; if (error) s.error = error; }
+    if (s) { s.phase = phase; s.error = error; }
     memoryStore.set("sessions", sessions);
     return;
   }
@@ -100,7 +154,7 @@ export async function updateSessionPhase(
   if (error) {
     await d.runAsync(`UPDATE sessions SET phase = ?, error = ? WHERE id = ?`, phase, error, id);
   } else {
-    await d.runAsync(`UPDATE sessions SET phase = ? WHERE id = ?`, phase, id);
+    await d.runAsync(`UPDATE sessions SET phase = ?, error = NULL WHERE id = ?`, phase, id);
   }
 }
 

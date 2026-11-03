@@ -20,6 +20,8 @@ import {
   getSttStatus,
 } from "../services/recording";
 import { insertSession } from "../services/storage";
+import { Mic, Pause, Play, Square, X } from "lucide-react-native";
+import { colors, fonts, IconButton, RecordingPulse, ScreenHeader } from "../ui";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Recording">;
 type Route = RouteProp<RootStackParamList, "Recording">;
@@ -49,9 +51,13 @@ export default function RecordingScreen() {
   const [error, setError] = useState<string | null>(null);
   const [simulated, setSimulated] = useState(false);
   const [sttInfo, setSttInfo] = useState<{ status: string; error: string | null }>({ status: "idle", error: null });
+  const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const autoStartConsumedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sttCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const recordingRef = useRef(false);
+  const ownsRecordingRef = useRef(false);
   const pausedRef = useRef(false);
   const startTimeRef = useRef<string | null>(null);
   const elapsedRef = useRef(0);
@@ -87,15 +93,17 @@ export default function RecordingScreen() {
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      cleanupRecording().catch(() => {});
+      mountedRef.current = false;
+      if (ownsRecordingRef.current) cleanupRecording().catch(() => {});
     };
   }, []);
 
   // Prevent back navigation while recording
   useEffect(() => {
     const unsubscribe = navigation.addListener("beforeRemove", (e) => {
-      if (!recordingRef.current && !pausedRef.current) return;
+      if (!ownsRecordingRef.current && !startingRef.current) return;
       e.preventDefault();
       setError("Stop recording before leaving.");
     });
@@ -103,11 +111,19 @@ export default function RecordingScreen() {
   }, [navigation]);
 
   const handleStart = useCallback(async () => {
+    if (startingRef.current || ownsRecordingRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
     setError(null);
     try {
       const result = await startRecording();
       startTimeRef.current = new Date().toISOString();
-      recordingRef.current = true;
+      ownsRecordingRef.current = true;
+      if (!mountedRef.current) {
+        await cleanupRecording();
+        ownsRecordingRef.current = false;
+        return;
+      }
       pausedRef.current = false;
       if (Platform.OS !== "web") {
         try { (await import("react-native")).Vibration.vibrate(50); } catch { /* ok */ }
@@ -117,20 +133,28 @@ export default function RecordingScreen() {
       setPaused(false);
       setElapsed(0);
     } catch (err: any) {
-      setError(err.message ?? "Could not start recording");
+      if (mountedRef.current) setError(err.message ?? "Could not start recording");
+    } finally {
+      startingRef.current = false;
+      if (mountedRef.current) setStarting(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (route.params.autoStart && !autoStartConsumedRef.current) {
+      autoStartConsumedRef.current = true;
+      void handleStart();
+    }
+  }, [route.params.autoStart, handleStart]);
 
   const handlePause = useCallback(async () => {
     try {
       if (pausedRef.current) {
         await resumeRecording();
-        recordingRef.current = true;
         pausedRef.current = false;
         setPaused(false);
       } else {
         await pauseRecording();
-        recordingRef.current = false;
         pausedRef.current = true;
         setPaused(true);
       }
@@ -144,8 +168,8 @@ export default function RecordingScreen() {
     setStopping(true);
     setError(null);
     try {
-      recordingRef.current = false;
       const { uri, durationMs, transcript: recTranscript } = await stopRecording(elapsedRef.current);
+      ownsRecordingRef.current = false;
       setRecording(false);
 
       const now = new Date().toISOString();
@@ -172,24 +196,20 @@ export default function RecordingScreen() {
   if (!recording) {
     return (
       <View style={styles.container}>
-        <Text style={styles.modeLabel}>{MODE_LABELS[mode]}</Text>
+        <ScreenHeader title="Recorder" caption={MODE_LABELS[mode]} back />
         <View style={styles.center}>
           <TouchableOpacity
             style={styles.startButton}
             onPress={handleStart}
-            disabled={stopping}
+            accessibilityRole="button" accessibilityLabel="Start Recording"
+            disabled={stopping || starting}
           >
-            <View style={styles.startButtonInner} />
+            <Mic size={30} color={colors.surface} />
           </TouchableOpacity>
-          <Text style={styles.hint}>Tap to start recording</Text>
+          <Text style={styles.hint}>{starting ? "Starting..." : "Ready to record"}</Text>
           {error && <Text style={styles.errorText}>{error}</Text>}
         </View>
-        <TouchableOpacity
-          style={styles.cancelButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.cancelButtonText}>Cancel</Text>
-        </TouchableOpacity>
+        <View style={styles.cancelButton}><IconButton icon={X} label="Cancel Recording" disabled={starting} onPress={() => navigation.goBack()} /></View>
       </View>
     );
   }
@@ -197,7 +217,10 @@ export default function RecordingScreen() {
   // Recording in progress
   return (
     <View style={styles.container}>
-      <Text style={styles.modeLabel}>{MODE_LABELS[mode]}</Text>
+      <View style={{ paddingTop: 32, paddingHorizontal: 24 }}>
+        <Text style={{ fontFamily: fonts.strong, fontSize: 26, color: colors.text }}>{paused ? "Paused" : "Recording"}</Text>
+        <Text style={styles.modeLabel}>{MODE_LABELS[mode]}</Text>
+      </View>
 
       {simulated && (
         <View style={styles.simBanner}>
@@ -224,38 +247,28 @@ export default function RecordingScreen() {
       )}
 
       <View style={styles.center}>
-        <Text style={styles.timer}>{formatTime(elapsed)}</Text>
-
-        <View style={styles.waveformPlaceholder}>
-          <View style={styles.waveBar} />
-          <View style={[styles.waveBar, { height: 16 }]} />
-          <View style={[styles.waveBar, { height: 32, backgroundColor: paused ? "#F9AB00" : "#EA4335" }]} />
-          <View style={[styles.waveBar, { height: 24 }]} />
-          <View style={[styles.waveBar, { height: 20 }]} />
-          <View style={[styles.waveBar, { height: 28 }]} />
-          <View style={[styles.waveBar, { height: 12 }]} />
+        <View style={{ width: 188, height: 188, alignItems: "center", justifyContent: "center" }}>
+          <RecordingPulse active={!paused && !stopping && !simulated} />
+          <Mic size={40} strokeWidth={1.4} color={paused ? colors.muted : colors.red} />
         </View>
+        <Text style={styles.timer}>{formatTime(elapsed)}</Text>
+        <Text style={styles.hint}>{stopping ? "Saving..." : simulated ? "Simulated capture" : paused ? "Capture paused" : "Microphone active"}</Text>
 
         {error && <Text style={styles.errorText}>{error}</Text>}
 
         <View style={styles.controls}>
-          <TouchableOpacity style={styles.secondaryButton} onPress={handlePause}>
-            <Text style={styles.secondaryButtonText}>
-              {paused ? "Resume" : "Pause"}
-            </Text>
-          </TouchableOpacity>
+          <IconButton icon={paused ? Play : Pause} label={paused ? "Resume Recording" : "Pause Recording"} onPress={handlePause} disabled={stopping} />
 
           <TouchableOpacity
             style={[styles.stopButton, stopping && styles.stopButtonDisabled]}
             onPress={handleStop}
             disabled={stopping}
+            accessibilityRole="button" accessibilityLabel="Stop and Save Recording"
+            {...(Platform.OS === "web" ? { title: "Stop and Save Recording" } : {})}
           >
-            <View style={styles.stopIcon} />
+            <Square size={26} color={colors.surface} fill={colors.surface} />
           </TouchableOpacity>
-
-          <TouchableOpacity style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>Flag</Text>
-          </TouchableOpacity>
+          <View style={{ width: 44 }} />
         </View>
       </View>
     </View>
@@ -265,22 +278,20 @@ export default function RecordingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#1A1A1A",
-    padding: 24,
-    paddingTop: 60,
+    backgroundColor: colors.background,
+    width: "100%", maxWidth: 1040, alignSelf: "center",
     justifyContent: "space-between",
   },
   modeLabel: {
-    color: "rgba(255,255,255,0.6)",
-    fontSize: 14,
-    textAlign: "center",
+    color: colors.muted, fontFamily: fonts.body,
+    fontSize: 13, marginTop: 8,
   },
   center: { flex: 1, justifyContent: "center", alignItems: "center", gap: 24 },
   startButton: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: "#EA4335",
+    backgroundColor: colors.red,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -290,14 +301,14 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: "#FFFFFF",
   },
-  hint: { color: "rgba(255,255,255,0.5)", fontSize: 15 },
+  hint: { color: colors.muted, fontFamily: fonts.body, fontSize: 13 },
   errorText: {
-    color: "#F28B82",
+    color: colors.red,
     fontSize: 13,
     textAlign: "center",
     paddingHorizontal: 24,
   },
-  cancelButton: { alignItems: "center", paddingBottom: 20 },
+  cancelButton: { alignItems: "center", paddingBottom: 24 },
   cancelButtonText: { color: "rgba(255,255,255,0.5)", fontSize: 15 },
   simBanner: {
     backgroundColor: "rgba(249,171,0,0.15)",
@@ -343,9 +354,9 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   timer: {
-    color: "#FFFFFF",
-    fontSize: 48,
-    fontWeight: "300",
+    color: colors.text,
+    fontSize: 52,
+    fontFamily: fonts.body,
     fontVariant: ["tabular-nums"],
   },
   waveformPlaceholder: {

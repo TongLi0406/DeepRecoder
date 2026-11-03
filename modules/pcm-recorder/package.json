@@ -3,5 +3,8 @@
   "version": "1.0.0",
   "description": "Native PCM WAV recorder for Android using AudioRecord API",
   "main": "src/index.ts",
-  "types": "src/index.ts"
+  "types": "src/index.ts",
+  "scripts": {
+    "setup:native-diary": "node android/scripts/setup-native-diary.js"
+  }
 }

@@ -1,0 +1,84 @@
+- generic [ref=f2e14]:
+  - generic [ref=f2e61]:
+    - generic:
+      - generic [aria-hidden]:
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - generic: Recorder
+                - generic: Tuesday, November 3
+              - button
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - generic: SESSION
+                    - generic:
+                      - tab:
+                        - generic: Meeting
+                      - tab:
+                        - generic: Classroom
+                    - generic:
+                      - generic: ROLE
+                      - radio:
+                        - generic: Attendee
+                      - radio:
+                        - generic: Organizer
+                    - generic:
+                      - generic:
+                        - button
+                      - generic: Start Recording
+                      - generic: Ready
+                  - generic:
+                    - generic: RECENT RECORDINGS
+                    - generic:
+                      - generic: No recordings yet
+                      - generic: 0 sessions
+    - generic [ref=f2e232]:
+      - generic [ref=f2e233]:
+        - generic [ref=f2e234]: Diary
+        - button "Settings" [ref=f2e236] [cursor=pointer]
+      - generic [ref=f2e241]:
+        - generic [ref=f2e242]: Background capture requires Android
+        - generic [ref=f2e244]:
+          - generic [ref=f2e245]: Daily Diaries
+          - generic [ref=f2e247]: 2026-11-03
+          - generic [ref=f2e248]: No diary entries yet
+        - button "Review Segments" [ref=f2e252] [cursor=pointer]:
+          - generic [ref=f2e253]: Segments · 0
+        - button "Diary Settings" [ref=f2e256] [cursor=pointer]
+    - generic:
+      - generic [aria-hidden]:
+        - generic:
+          - generic:
+            - generic:
+              - generic: Library
+              - button
+            - generic:
+              - tab:
+                - generic: Recordings
+              - tab:
+                - generic: Skills
+            - generic:
+              - generic: No recordings yet
+              - generic: 0 sessions
+    - generic:
+      - generic [aria-hidden]:
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - generic: Ask
+                - button
+              - generic: No conversation yet
+              - generic:
+                - textbox:
+                  - /placeholder: Your question
+                - generic:
+                  - button [disabled]
+  - tablist [ref=f2e16]:
+    - tab "Record" [ref=f2e18] [cursor=pointer]
+    - tab "Diary" [active] [selected] [ref=f2e30] [cursor=pointer]
+    - tab "Library" [ref=f2e40] [cursor=pointer]
+    - tab "Ask" [ref=f2e50] [cursor=pointer]

@@ -6,16 +6,17 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from "react-native";
-import { getApiKey, saveApiKey, deleteApiKey, testConnection } from "../services/api";
+import { getApiKey, saveApiKey, deleteApiKey, testConnection, getModelConfig, saveModelConfig, type ModelConfig } from "../services/api";
 import {
   getSiliconFlowKey,
   saveSiliconFlowKey,
   deleteSiliconFlowKey,
   testSiliconFlowConnection,
 } from "../services/embedding";
+import { Eye, EyeOff, PlugZap, Save, Trash2 } from "lucide-react-native";
+import { colors, fonts, IconButton, PageEntrance, ScreenHeader, uiStyles } from "../ui";
 
 export default function SettingsScreen() {
   const [apiKey, setApiKey] = useState("");
@@ -23,6 +24,10 @@ export default function SettingsScreen() {
   const [hasKey, setHasKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [status, setStatus] = useState<"unknown" | "valid" | "invalid">("unknown");
+  const [model, setModel] = useState<ModelConfig | null>(null);
+  const [contextLimit, setContextLimit] = useState("");
+  const [modelDirty, setModelDirty] = useState(false);
+  const [feedback, setFeedback] = useState("");
 
   const [sfKey, setSfKey] = useState("");
   const [sfShowKey, setSfShowKey] = useState(false);
@@ -31,6 +36,8 @@ export default function SettingsScreen() {
   const [sfStatus, setSfStatus] = useState<"unknown" | "valid" | "invalid">("unknown");
 
   useEffect(() => {
+    getModelConfig().then(config => { setModel(config); setContextLimit(String(config.contextLimit)); })
+      .catch(() => setFeedback("Could not load model configuration."));
     getApiKey().then((key) => {
       if (key) {
         setApiKey(key);
@@ -47,50 +54,51 @@ export default function SettingsScreen() {
 
   const handleSave = useCallback(async () => {
     if (!apiKey.trim()) {
-      Alert.alert("Error", "Please enter an API key");
+      setFeedback("Please enter an API key.");
       return;
     }
-    await saveApiKey(apiKey.trim());
-    setHasKey(true);
-    setStatus("unknown");
-    Alert.alert("Saved", "API key saved securely on-device");
+    try {
+      await saveApiKey(apiKey.trim());
+      setHasKey(true);
+      setStatus("unknown");
+      setFeedback("Model API key saved on-device.");
+    } catch { setFeedback("Could not save the model API key."); }
   }, [apiKey]);
 
   const handleTest = useCallback(async () => {
+    if (modelDirty) return;
     setTesting(true);
     setStatus("unknown");
     try {
       const ok = await testConnection(apiKey.trim());
       setStatus(ok ? "valid" : "invalid");
-      Alert.alert(
-        ok ? "Connected" : "Failed",
-        ok ? "API connection successful" : "Could not connect. Check your key and network.",
-      );
+      setFeedback(ok ? "Model connection successful." : "Could not connect. Check your key and network.");
     } catch {
       setStatus("invalid");
-      Alert.alert("Error", "Connection test failed");
+      setFeedback("Model connection test failed.");
     } finally {
       setTesting(false);
     }
-  }, [apiKey]);
+  }, [apiKey, modelDirty]);
 
   const handleDelete = useCallback(async () => {
-    await deleteApiKey();
-    setApiKey("");
-    setHasKey(false);
-    setStatus("unknown");
-    Alert.alert("Removed", "API key removed from device");
+    try {
+      await deleteApiKey();
+      setApiKey(""); setHasKey(false); setStatus("unknown");
+      setFeedback("Model API key removed from device.");
+    } catch { setFeedback("Could not remove the model API key."); }
   }, []);
 
   const handleSfSave = useCallback(async () => {
     if (!sfKey.trim()) {
-      Alert.alert("Error", "Please enter a SiliconFlow API key");
+      setFeedback("Please enter a SiliconFlow API key.");
       return;
     }
-    await saveSiliconFlowKey(sfKey.trim());
-    setSfHasKey(true);
-    setSfStatus("unknown");
-    Alert.alert("Saved", "SiliconFlow API key saved securely on-device");
+    try {
+      await saveSiliconFlowKey(sfKey.trim());
+      setSfHasKey(true); setSfStatus("unknown");
+      setFeedback("SiliconFlow API key saved on-device.");
+    } catch { setFeedback("Could not save the SiliconFlow API key."); }
   }, [sfKey]);
 
   const handleSfTest = useCallback(async () => {
@@ -99,53 +107,78 @@ export default function SettingsScreen() {
     try {
       const ok = await testSiliconFlowConnection(sfKey.trim());
       setSfStatus(ok ? "valid" : "invalid");
-      Alert.alert(
-        ok ? "Connected" : "Failed",
-        ok ? "SiliconFlow connection successful" : "Could not connect. Check your key and network.",
-      );
+      setFeedback(ok ? "SiliconFlow connection successful." : "Could not connect. Check your key and network.");
     } catch {
       setSfStatus("invalid");
-      Alert.alert("Error", "Connection test failed");
+      setFeedback("SiliconFlow connection test failed.");
     } finally {
       setSfTesting(false);
     }
   }, [sfKey]);
 
   const handleSfDelete = useCallback(async () => {
-    await deleteSiliconFlowKey();
-    setSfKey("");
-    setSfHasKey(false);
-    setSfStatus("unknown");
-    Alert.alert("Removed", "SiliconFlow API key removed from device");
+    try {
+      await deleteSiliconFlowKey();
+      setSfKey(""); setSfHasKey(false); setSfStatus("unknown");
+      setFeedback("SiliconFlow API key removed from device.");
+    } catch { setFeedback("Could not remove the SiliconFlow API key."); }
   }, []);
 
   return (
+    <PageEntrance style={uiStyles.page}>
+      <ScreenHeader title="Settings" back />
+      {!!feedback && <Text accessibilityRole="alert" style={styles.feedback}>{feedback}</Text>}
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Settings</Text>
+      <Text style={styles.sectionTitle}>Model</Text>
+      {model && <>
+        <Text style={styles.aboutText}>HTTPS endpoint</Text>
+        <TextInput accessibilityLabel="HTTPS endpoint" style={styles.input} value={model.endpoint} autoCapitalize="none" autoCorrect={false} keyboardType="url"
+          onChangeText={endpoint => { setModel({ ...model, endpoint }); setModelDirty(true); }} />
+        <Text style={styles.aboutText}>Model name</Text>
+        <TextInput accessibilityLabel="Model name" style={styles.input} value={model.model} autoCapitalize="none" autoCorrect={false}
+          onChangeText={name => { setModel({ ...model, model: name }); setModelDirty(true); }} />
+        <Text style={styles.aboutText}>Context limit (tokens)</Text>
+        <TextInput accessibilityLabel="Context limit in tokens" style={styles.input} value={contextLimit} keyboardType="number-pad"
+          onChangeText={value => { setContextLimit(value); setModelDirty(true); }} />
+        <View style={[uiStyles.segmented, { marginTop: 12, marginBottom: 12 }]}>
+          {(["anthropic", "openai"] as const).map(format => <TouchableOpacity key={format}
+            accessibilityRole="radio" accessibilityState={{ checked: model.format === format }}
+            style={[uiStyles.segment, model.format === format && uiStyles.segmentActive]}
+            onPress={() => { setModel({ ...model, format }); setModelDirty(true); }}>
+            <Text style={[uiStyles.segmentText, model.format === format && { color: colors.accent }]}>{format === "openai" ? "OpenAI" : "Anthropic"}</Text>
+          </TouchableOpacity>)}
+        </View>
+        {modelDirty && <Text style={styles.aboutText}>Unsaved model configuration</Text>}
+        <View style={styles.buttonRow}><IconButton icon={Save} label="Save model configuration" onPress={async () => {
+          try {
+            if (!/^\d+$/.test(contextLimit)) throw new Error("Context limit must be an integer");
+            const config = { ...model, contextLimit: Number(contextLimit) };
+            await saveModelConfig(config);
+            setModel(config); setModelDirty(false); setStatus("unknown");
+            setFeedback("Model configuration saved.");
+          } catch (error: any) { setFeedback(`Invalid model: ${error.message}`); }
+        }} /></View>
+      </>}
 
       <Text style={styles.sectionTitle}>API Key</Text>
       <Text style={styles.sectionDesc}>
         Connect your DeepSeek or Qwen API key. Your key stays on-device and is
-        never sent anywhere except to the API provider directly.
+        sent with requests only to the configured model endpoint.
       </Text>
 
       <View style={styles.inputRow}>
         <TextInput
           style={styles.input}
+          accessibilityLabel="Model API key"
           placeholder="sk-..."
-          placeholderTextColor="#9AA0A6"
+          placeholderTextColor={colors.muted}
           value={apiKey}
           onChangeText={setApiKey}
           secureTextEntry={!showKey}
           autoCapitalize="none"
           autoCorrect={false}
         />
-        <TouchableOpacity
-          style={styles.showButton}
-          onPress={() => setShowKey((v) => !v)}
-        >
-          <Text style={styles.showButtonText}>{showKey ? "Hide" : "Show"}</Text>
-        </TouchableOpacity>
+        <IconButton icon={showKey ? EyeOff : Eye} label={showKey ? "Hide model API key" : "Show model API key"} onPress={() => setShowKey(value => !value)} />
       </View>
 
       {status !== "unknown" && (
@@ -167,53 +200,42 @@ export default function SettingsScreen() {
       )}
 
       <View style={styles.buttonRow}>
-        <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-          <Text style={styles.saveButtonText}>Save</Text>
-        </TouchableOpacity>
+        <IconButton icon={Save} label="Save model API key" onPress={handleSave} />
 
         <TouchableOpacity
           style={[styles.testButton, testing && styles.testButtonDisabled]}
+          accessibilityRole="button"
           onPress={handleTest}
-          disabled={testing}
+          disabled={testing || modelDirty}
         >
           {testing ? (
-            <ActivityIndicator size="small" color="#1A73E8" />
+            <ActivityIndicator size="small" color={colors.accent} />
           ) : (
-            <Text style={styles.testButtonText}>Test Connection</Text>
+            <><PlugZap size={18} color={colors.accent} /><Text style={styles.testButtonText}>Test Connection</Text></>
           )}
         </TouchableOpacity>
+        {hasKey && <IconButton icon={Trash2} label="Remove model API key" onPress={handleDelete} />}
       </View>
-
-      {hasKey && (
-        <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-          <Text style={styles.deleteButtonText}>Remove Key</Text>
-        </TouchableOpacity>
-      )}
 
       <Text style={[styles.sectionTitle, { marginTop: 16 }]}>SiliconFlow API Key</Text>
       <Text style={styles.sectionDesc}>
-        Used for generating high-quality embeddings (BAAI/bge-large-zh-v1.5) for
-        the RAG knowledge base. If not configured, DeepSeek LLM will be used as
-        fallback with lower quality.
+        Audio transcription uploads recordings to SiliconFlow. Knowledge-base
+        embeddings also send text to SiliconFlow. Diary uploads require separate consent.
       </Text>
 
       <View style={styles.inputRow}>
         <TextInput
           style={styles.input}
+          accessibilityLabel="SiliconFlow API key"
           placeholder="sk-..."
-          placeholderTextColor="#9AA0A6"
+          placeholderTextColor={colors.muted}
           value={sfKey}
           onChangeText={setSfKey}
           secureTextEntry={!sfShowKey}
           autoCapitalize="none"
           autoCorrect={false}
         />
-        <TouchableOpacity
-          style={styles.showButton}
-          onPress={() => setSfShowKey((v) => !v)}
-        >
-          <Text style={styles.showButtonText}>{sfShowKey ? "Hide" : "Show"}</Text>
-        </TouchableOpacity>
+        <IconButton icon={sfShowKey ? EyeOff : Eye} label={sfShowKey ? "Hide SiliconFlow API key" : "Show SiliconFlow API key"} onPress={() => setSfShowKey(value => !value)} />
       </View>
 
       {sfStatus !== "unknown" && (
@@ -235,28 +257,22 @@ export default function SettingsScreen() {
       )}
 
       <View style={styles.buttonRow}>
-        <TouchableOpacity style={styles.saveButton} onPress={handleSfSave}>
-          <Text style={styles.saveButtonText}>Save</Text>
-        </TouchableOpacity>
+        <IconButton icon={Save} label="Save SiliconFlow API key" onPress={handleSfSave} />
 
         <TouchableOpacity
           style={[styles.testButton, sfTesting && styles.testButtonDisabled]}
+          accessibilityRole="button"
           onPress={handleSfTest}
           disabled={sfTesting}
         >
           {sfTesting ? (
-            <ActivityIndicator size="small" color="#1A73E8" />
+            <ActivityIndicator size="small" color={colors.accent} />
           ) : (
-            <Text style={styles.testButtonText}>Test Connection</Text>
+            <><PlugZap size={18} color={colors.accent} /><Text style={styles.testButtonText}>Test Connection</Text></>
           )}
         </TouchableOpacity>
+        {sfHasKey && <IconButton icon={Trash2} label="Remove SiliconFlow API key" onPress={handleSfDelete} />}
       </View>
-
-      {sfHasKey && (
-        <TouchableOpacity style={styles.deleteButton} onPress={handleSfDelete}>
-          <Text style={styles.deleteButtonText}>Remove Key</Text>
-        </TouchableOpacity>
-      )}
 
       <Text style={styles.sectionTitle}>Data</Text>
       <Text style={styles.aboutText}>
@@ -268,29 +284,29 @@ export default function SettingsScreen() {
       <Text style={[styles.sectionTitle, { marginTop: 24 }]}>About</Text>
       <Text style={styles.aboutText}>
         Recorder v1.0.0{"\n"}
-        Local-first meeting & classroom intelligence{"\n"}
-        Your data never leaves your device without your API key
+        Local-first meeting & classroom intelligence
       </Text>
     </ScrollView>
+    </PageEntrance>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFFFFF" },
-  content: { padding: 24, paddingTop: 60 },
-  title: { fontSize: 32, fontWeight: "700", color: "#1A1A1A", marginBottom: 24 },
-  sectionTitle: { fontSize: 18, fontWeight: "600", color: "#1A1A1A", marginBottom: 8 },
-  sectionDesc: { fontSize: 13, color: "#5F6368", marginBottom: 16, lineHeight: 18 },
+  container: { flex: 1, backgroundColor: colors.background },
+  content: { padding: 24, paddingTop: 4, paddingBottom: 32 },
+  feedback: { fontSize: 13, fontFamily: fonts.body, color: colors.accent, paddingHorizontal: 24, paddingBottom: 16 },
+  sectionTitle: { fontSize: 18, fontFamily: fonts.strong, color: colors.text, marginBottom: 12 },
+  sectionDesc: { fontSize: 13, fontFamily: fonts.body, color: colors.muted, marginBottom: 16, lineHeight: 21 },
   inputRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
   input: {
-    flex: 1,
+    flex: 1, minWidth: 0, minHeight: 44,
     borderWidth: 1,
-    borderColor: "#DADCE0",
-    borderRadius: 10,
+    borderColor: colors.line,
+    borderRadius: 8,
     padding: 12,
-    fontSize: 15,
-    color: "#1A1A1A",
-    backgroundColor: "#F8F9FA",
+    fontSize: 14, fontFamily: fonts.body,
+    color: colors.text,
+    backgroundColor: colors.surface,
   },
   showButton: { marginLeft: 12 },
   showButtonText: { color: "#1A73E8", fontSize: 14, fontWeight: "500" },
@@ -301,12 +317,12 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginBottom: 12,
   },
-  statusValid: { backgroundColor: "#E6F4EA" },
+  statusValid: { backgroundColor: colors.soft },
   statusInvalid: { backgroundColor: "#FCE8E6" },
-  statusText: { fontSize: 12, fontWeight: "500" },
-  statusTextValid: { color: "#137333" },
-  statusTextInvalid: { color: "#C5221F" },
-  buttonRow: { flexDirection: "row", gap: 12, marginBottom: 12 },
+  statusText: { fontSize: 12, fontFamily: fonts.strong },
+  statusTextValid: { color: colors.accent },
+  statusTextInvalid: { color: colors.red },
+  buttonRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 24 },
   saveButton: {
     backgroundColor: "#1A73E8",
     borderRadius: 10,
@@ -316,14 +332,15 @@ const styles = StyleSheet.create({
   saveButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
   testButton: {
     borderWidth: 1,
-    borderColor: "#1A73E8",
-    borderRadius: 10,
+    borderColor: colors.line,
+    borderRadius: 8,
     paddingVertical: 12,
-    paddingHorizontal: 24,
+    paddingHorizontal: 12,
+    minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
   },
   testButtonDisabled: { opacity: 0.5 },
-  testButtonText: { color: "#1A73E8", fontSize: 15, fontWeight: "500" },
+  testButtonText: { color: colors.accent, fontSize: 13, fontFamily: fonts.strong },
   deleteButton: { alignItems: "center", paddingVertical: 8, marginBottom: 24 },
   deleteButtonText: { color: "#C5221F", fontSize: 14 },
-  aboutText: { fontSize: 13, color: "#5F6368", lineHeight: 20 },
+  aboutText: { fontSize: 12, fontFamily: fonts.body, color: colors.muted, lineHeight: 21 },
 });

@@ -1,52 +1,43 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-import { Text } from "react-native";
+import { useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import HomeScreen from "../screens/HomeScreen";
-import HistoryScreen from "../screens/HistoryScreen";
-import SkillsScreen from "../screens/SkillsScreen";
+import LibraryScreen from "../screens/LibraryScreen";
 import SearchScreen from "../screens/SearchScreen";
-import SettingsScreen from "../screens/SettingsScreen";
+import DiaryScreen from "../screens/DiaryScreen";
+import { BookOpen, Library, MessagesSquare, Mic, type LucideIcon } from "lucide-react-native";
+import { colors, fonts, useReducedMotion } from "../ui";
 
 const Tab = createBottomTabNavigator();
 
-function TabIcon({ label, focused }: { label: string; focused: boolean }) {
-  const icons: Record<string, string> = {
-    Home: "🎙️",
-    History: "📋",
-    Skills: "🧩",
-    Search: "🔍",
-    Settings: "⚙️",
-  };
-  return (
-    <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.5 }}>
-      {icons[label] ?? "•"}
-    </Text>
-  );
-}
+const icons: Record<string, LucideIcon> = { Home: Mic, Diary: BookOpen, Library, Search: MessagesSquare };
 
 export default function AppNavigator() {
+  const reduced = useReducedMotion();
   const insets = useSafeAreaInsets();
+  const wide = useWindowDimensions().width >= 900;
 
   return (
     <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarIcon: ({ focused }) => (
-          <TabIcon label={route.name} focused={focused} />
-        ),
-        tabBarActiveTintColor: "#1A73E8",
-        tabBarInactiveTintColor: "#9AA0A6",
+      screenOptions={({ route }) => {
+        const Icon = icons[route.name];
+        return {
+        headerShown: false, animation: reduced ? "none" : "fade",
+        tabBarPosition: wide ? "left" : "bottom",
+        tabBarLabelPosition: wide ? "beside-icon" : "below-icon",
+        tabBarIcon: ({ color }) => <Icon size={22} color={color} strokeWidth={1.7} />,
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.muted,
+        tabBarActiveBackgroundColor: colors.soft,
         tabBarStyle: {
-          borderTopColor: "#E8EAED",
-          backgroundColor: "#FFFFFF",
-          paddingBottom: insets.bottom > 0 ? insets.bottom : 4,
-          height: 56 + (insets.bottom > 0 ? insets.bottom : 0),
+          borderTopColor: colors.line, borderRightColor: colors.line,
+          backgroundColor: colors.surface,
+          ...(wide ? { width: 180, minWidth: 180, paddingTop: 32, paddingHorizontal: 10 }
+            : { paddingBottom: Math.max(insets.bottom, 6), height: 64 + insets.bottom }),
         },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "500",
-        },
-      })}
+        tabBarItemStyle: wide ? { minHeight: 52, borderRadius: 8, marginBottom: 6 } : undefined,
+        tabBarLabelStyle: { fontSize: 12, fontFamily: fonts.strong },
+      };}}
     >
       <Tab.Screen
         name="Home"
@@ -54,24 +45,19 @@ export default function AppNavigator() {
         options={{ tabBarLabel: "Record" }}
       />
       <Tab.Screen
-        name="History"
-        component={HistoryScreen}
-        options={{ tabBarLabel: "History" }}
+        name="Diary"
+        component={DiaryScreen}
+        options={{ tabBarLabel: "Diary" }}
       />
       <Tab.Screen
-        name="Skills"
-        component={SkillsScreen}
-        options={{ tabBarLabel: "Skills Summary" }}
+        name="Library"
+        component={LibraryScreen}
+        options={{ tabBarLabel: "Library" }}
       />
       <Tab.Screen
         name="Search"
         component={SearchScreen}
         options={{ tabBarLabel: "Ask" }}
-      />
-      <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{ tabBarLabel: "Settings" }}
       />
     </Tab.Navigator>
   );

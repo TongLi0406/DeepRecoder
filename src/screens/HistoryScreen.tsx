@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -14,6 +15,8 @@ import type { RootStackParamList } from "../../App";
 import type { Session } from "../types";
 import { getAllSessions, getSessionById, deleteSession } from "../services/storage";
 import { getCourseGroups, type CourseGroup } from "../services/courses";
+import { ArrowUpRight, AudioLines, Trash2 } from "lucide-react-native";
+import { colors, fonts, IconButton, PageEntrance } from "../ui";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
 
@@ -37,16 +40,22 @@ export default function HistoryScreen() {
   const navigation = useNavigation<Nav>();
   const [groups, setGroups] = useState<CourseGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const sessions = await getAllSessions();
-    const courseGroups = await getCourseGroups(sessions);
-    setGroups(courseGroups);
-    setLoading(false);
+    setError("");
+    try {
+      const sessions = await getAllSessions();
+      const courseGroups = await getCourseGroups(sessions);
+      setGroups(courseGroups);
+    } catch {
+      setError("Could not load recordings.");
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
+    void loadData();
     const unsubscribe = navigation.addListener("focus", loadData);
     return unsubscribe;
   }, [navigation, loadData]);
@@ -54,7 +63,7 @@ export default function HistoryScreen() {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#1A73E8" />
+        <ActivityIndicator size="small" color={colors.accent} />
       </View>
     );
   }
@@ -62,18 +71,17 @@ export default function HistoryScreen() {
   if (groups.length === 0) {
     return (
       <View style={styles.empty}>
-        <Text style={styles.emptyIcon}>📋</Text>
-        <Text style={styles.emptyTitle}>No recordings yet</Text>
-        <Text style={styles.emptySubtitle}>
-          Your recorded sessions will appear here, grouped by course
-        </Text>
+        <AudioLines size={32} strokeWidth={1.3} color={colors.muted} />
+        <Text style={styles.emptyTitle}>{error ? "Recordings unavailable" : "No recordings yet"}</Text>
+        {error ? <Text accessibilityRole="alert" style={styles.feedback}>{error}</Text>
+          : <Text style={styles.emptySubtitle}>0 sessions</Text>}
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>History</Text>
+    <PageEntrance style={styles.container}>
+      {!!error && <Text accessibilityRole="alert" style={styles.feedback}>{error}</Text>}
       <SectionList
         sections={groups.map((g) => ({
           title: g.courseName,
@@ -90,28 +98,37 @@ export default function HistoryScreen() {
         )}
         renderItem={({ item }) => {
           const s = item as CourseGroup["sessions"][0];
-          const handleDelete = () => {
+          const handleDelete = async () => {
+            if (Platform.OS === "web") {
+              if (!window.confirm("Permanently delete this recording and its data?")) return;
+              try { await deleteSession(s.id); await loadData(); }
+              catch { setError("Could not delete the recording."); }
+              return;
+            }
             Alert.alert("Delete Session", "This will permanently remove the session and its data.", [
               { text: "Cancel", style: "cancel" },
               {
                 text: "Delete",
                 style: "destructive",
                 onPress: async () => {
-                  await deleteSession(s.id);
-                  loadData();
+                  try { await deleteSession(s.id); await loadData(); }
+                  catch { setError("Could not delete the recording."); }
                 },
               },
             ]);
           };
           return (
+            <View style={styles.item}>
             <TouchableOpacity
-              style={styles.item}
+              style={styles.openButton}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${s.topic || "Untitled"}`}
               onPress={() => {
                 getSessionById(s.id).then((full) => {
                   if (full) {
                     navigation.navigate("Summary", { session: full });
                   }
-                });
+                }).catch(() => setError("Could not open the recording."));
               }}
               onLongPress={handleDelete}
             >
@@ -124,18 +141,21 @@ export default function HistoryScreen() {
                   {s.phase === "failed" ? " · Failed" : s.phase !== "done" ? ` · ${s.phase}` : ""}
                 </Text>
               </View>
-              <Text style={styles.itemArrow}>→</Text>
+              <ArrowUpRight size={18} color={colors.muted} />
             </TouchableOpacity>
+              <IconButton icon={Trash2} label={`Delete ${s.topic || "Untitled"}`} onPress={handleDelete} />
+            </View>
           );
         }}
         contentContainerStyle={styles.list}
       />
-    </View>
+    </PageEntrance>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFFFFF" },
+  container: { flex: 1, backgroundColor: colors.background },
+  feedback: { paddingHorizontal: 24, paddingVertical: 8, fontFamily: fonts.body, fontSize: 14, lineHeight: 22, color: colors.red },
   title: {
     fontSize: 32,
     fontWeight: "700",
@@ -156,23 +176,22 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#E8EAED",
   },
-  sectionTitle: { fontSize: 18, fontWeight: "600", color: "#1A1A1A" },
-  sectionCount: { fontSize: 13, color: "#5F6368" },
+  sectionTitle: { flex: 1, fontSize: 16, fontFamily: fonts.strong, color: colors.text },
+  sectionCount: { fontSize: 12, fontFamily: fonts.body, color: colors.muted },
   item: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 12,
-    paddingHorizontal: 12,
-    backgroundColor: "#F8F9FA",
-    borderRadius: 10,
-    marginBottom: 6,
+    borderBottomWidth: 1, borderBottomColor: colors.line,
+    backgroundColor: colors.background,
   },
-  itemLeft: { flex: 1 },
-  itemTopic: { fontSize: 15, fontWeight: "500", color: "#1A1A1A" },
-  itemDate: { fontSize: 12, color: "#9AA0A6", marginTop: 2 },
+  openButton: { flex: 1, minWidth: 0, minHeight: 44, flexDirection: "row", alignItems: "center", gap: 12 },
+  itemLeft: { flex: 1, minWidth: 0 },
+  itemTopic: { fontSize: 15, fontFamily: fonts.strong, color: colors.text },
+  itemDate: { fontSize: 12, fontFamily: fonts.body, color: colors.muted, marginTop: 5 },
   itemArrow: { fontSize: 18, color: "#9AA0A6" },
-  empty: { flex: 1, justifyContent: "center", alignItems: "center", padding: 40 },
+  empty: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 14 },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { fontSize: 20, fontWeight: "600", color: "#1A1A1A" },
-  emptySubtitle: { fontSize: 14, color: "#5F6368", marginTop: 8, textAlign: "center" },
+  emptyTitle: { fontSize: 18, fontFamily: fonts.strong, color: colors.text },
+  emptySubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.muted, textAlign: "center" },
 });

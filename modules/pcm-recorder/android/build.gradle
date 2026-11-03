@@ -4,22 +4,34 @@ apply plugin: 'kotlin-android'
 group = 'expo.modules.pcmrecorder'
 version = '1.0.0'
 
+def sherpaAar = file("$projectDir/libs/sherpa-onnx-1.13.7.aar")
+if (!sherpaAar.exists()) {
+  throw new GradleException("Missing required dependency: modules/pcm-recorder/android/libs/sherpa-onnx-1.13.7.aar. Run node modules/pcm-recorder/android/scripts/setup-native-diary.js first.")
+}
+
+repositories {
+  flatDir {
+    dirs "$projectDir/libs"
+  }
+}
+
 def safeExtGet(prop, fallback) {
   rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
 }
 
 android {
   namespace "expo.modules.pcmrecorder"
-  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+  compileSdkVersion safeExtGet("compileSdkVersion", 36)
 
   defaultConfig {
     minSdkVersion safeExtGet("minSdkVersion", 24)
-    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    targetSdkVersion safeExtGet("targetSdkVersion", 36)
   }
 
   compileOptions {
     sourceCompatibility JavaVersion.VERSION_17
     targetCompatibility JavaVersion.VERSION_17
+    coreLibraryDesugaringEnabled true
   }
 
   kotlinOptions {
@@ -35,4 +47,7 @@ dependencies {
   implementation project(':expo-modules-core')
   implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.21"
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+  coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
+
+  implementation(name: 'sherpa-onnx-1.13.7', ext: 'aar')
 }

@@ -9,15 +9,16 @@ import {
   Alert,
   Platform,
 } from "react-native";
-import { useNavigation, useRoute } from "@react-navigation/native";
+import { useNavigation, usePreventRemove, useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../App";
 import type { StudentSummary, TeacherSummary, MeetingSummary } from "../types";
 import { getSessionById, getSessionPartialSummary, updateSessionPhase } from "../services/storage";
 import { startProcessing, abortProcessing, getQueueState, addQueueListener } from "../services/processingQueue";
-import { sessionToHtml, sessionToMarkdown } from "../services/export";
-import { analyzeEngagement } from "../services/engagement";
+import { exportDocument, sessionToHtml, sessionToMarkdown } from "../services/export";
+import { Check, ChevronDown, ChevronRight, Download, FileText, RotateCcw } from "lucide-react-native";
+import { colors, fonts, IconButton, PageEntrance, ScreenHeader, uiStyles } from "../ui";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Summary">;
 type Route = RouteProp<RootStackParamList, "Summary">;
@@ -66,7 +67,6 @@ function StudentSummaryView({ summary }: { summary: StudentSummary }) {
 }
 
 function TeacherSummaryView({ summary, transcript }: { summary: TeacherSummary; transcript?: string }) {
-  const analytics = transcript ? analyzeEngagement(transcript) : null;
 
   return (
     <>
@@ -75,30 +75,6 @@ function TeacherSummaryView({ summary, transcript }: { summary: TeacherSummary; 
           Style: {summary.teachingStyle} · Interaction: {summary.interactionLevel}
         </Text>
       </View>
-
-      {analytics && (
-        <View style={styles.engagementCard}>
-          <Text style={styles.engagementTitle}>Engagement Metrics</Text>
-          <View style={styles.engagementGrid}>
-            <View style={styles.engagementStat}>
-              <Text style={styles.engagementValue}>{analytics.speakerCount}</Text>
-              <Text style={styles.engagementLabel}>Speakers</Text>
-            </View>
-            <View style={styles.engagementStat}>
-              <Text style={styles.engagementValue}>{analytics.questionCount}</Text>
-              <Text style={styles.engagementLabel}>Questions</Text>
-            </View>
-            <View style={styles.engagementStat}>
-              <Text style={styles.engagementValue}>{Math.round(analytics.participationRatio * 100)}%</Text>
-              <Text style={styles.engagementLabel}>Student Talk</Text>
-            </View>
-            <View style={styles.engagementStat}>
-              <Text style={styles.engagementValue}>{analytics.teacherUtterances + analytics.studentUtterances}</Text>
-              <Text style={styles.engagementLabel}>Utterances</Text>
-            </View>
-          </View>
-        </View>
-      )}
 
       <Text style={styles.section}>Teaching Structure</Text>
       {summary.teachingStructure.map((s, i) => (
@@ -184,6 +160,11 @@ export default function SummaryScreen() {
   const [session, setSession] = useState(initialSession);
   const [streamingText, setStreamingText] = useState("");
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
+  const [transcriptExpanded, setTranscriptExpanded] = useState(false);
+  const [debugExpanded, setDebugExpanded] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const doneReported = useRef(false);
 
@@ -200,109 +181,88 @@ export default function SummaryScreen() {
   useEffect(() => {
     if (isDone || isFailed) return;
 
+    let mounted = true;
+    doneReported.current = false;
     addDebug(`Queue: starting processing for ${initialSession.id}`);
     startProcessing(initialSession.id);
 
     // Poll session from DB every second while processing
     const poll = async () => {
-      const updated = await getSessionById(initialSession.id);
-      if (updated) {
-        setSession(updated);
-        // Poll for streaming text during summarization
-        if (updated.phase === "summarizing") {
-          const text = await getSessionPartialSummary(initialSession.id);
-          if (text) setStreamingText(text);
+      try {
+        const updated = await getSessionById(initialSession.id);
+        if (updated && mounted) {
+          setSession(updated);
+          // Poll for streaming text during summarization
+          if (updated.phase === "summarizing") {
+            const text = await getSessionPartialSummary(initialSession.id);
+            if (text && mounted) setStreamingText(text);
+          }
+          if ((updated.phase === "done" || updated.phase === "failed") && !doneReported.current) {
+            doneReported.current = true;
+            addDebug(`Queue: ${updated.phase}`);
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          }
         }
-        if ((updated.phase === "done" || updated.phase === "failed") && !doneReported.current) {
-          doneReported.current = true;
-          addDebug(`Queue: ${updated.phase}`);
-          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-        }
+      } catch {
+        if (mounted) addDebug("Could not refresh processing status.");
       }
     };
 
     pollRef.current = setInterval(poll, 1000);
 
     // Listen for queue events (faster than polling)
-    const unsub = addQueueListener(async () => {
-      const updated = await getSessionById(initialSession.id);
-      if (updated) setSession(updated);
-    });
+    const unsub = addQueueListener(poll);
 
     return () => {
+      mounted = false;
       if (pollRef.current) clearInterval(pollRef.current);
       unsub();
     };
-  }, [initialSession.id]);
+  }, [initialSession.id, processing]);
 
-  const handleShare = async () => {
-    Alert.alert("Export", "Choose export format:", [
-      {
-        text: "PDF",
-        onPress: async () => {
-          try {
-            const { printToFileAsync } = await import("expo-print");
-            const { shareAsync } = await import("expo-sharing");
-            const html = sessionToHtml(session);
-            const file = await printToFileAsync({ html, base64: false });
-            await shareAsync(file.uri, { mimeType: "application/pdf" });
-          } catch (e: any) {
-            Alert.alert("Export failed", e.message);
-          }
-        },
-      },
-      {
-        text: "Markdown",
-        onPress: async () => {
-          try {
-            const { writeAsStringAsync, documentDirectory } = await import("expo-file-system/legacy");
-            const { shareAsync } = await import("expo-sharing");
-            const md = sessionToMarkdown(session);
-            const name = (session.title || "session").replace(/[^a-zA-Z0-9一-鿿]/g, "_");
-            const fileUri = `${documentDirectory}${name}.md`;
-            await writeAsStringAsync(fileUri, md, { encoding: "utf8" });
-            await shareAsync(fileUri, { mimeType: "text/markdown" });
-          } catch (e: any) {
-            Alert.alert("Export failed", e.message);
-          }
-        },
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
+  const handleShare = async (format: "pdf" | "markdown") => {
+    setExporting(true); setExportError("");
+    try {
+      await exportDocument(format, session.title || "session", format === "pdf" ? sessionToHtml(session) : sessionToMarkdown(session));
+      setExportOpen(false);
+    } catch (error: any) { setExportError(error.message ?? "Export failed."); }
+    finally { setExporting(false); }
   };
 
-  const handleDone = () => {
-    if (processing) {
-      const { running, sessionId } = getQueueState();
-      const isThisSession = running && sessionId === initialSession.id;
-
-      Alert.alert(
-        "Processing in progress",
-        isThisSession
-          ? "Transcription or analysis is still running. You can leave — processing will continue in the background."
-          : "Processing is still running.",
-        [
-          { text: "Wait", style: "cancel" },
-          {
-            text: isThisSession ? "Leave (background)" : "Leave",
-            style: isThisSession ? "default" : "destructive",
-            onPress: () => navigation.popToTop(),
-          },
-          ...(isThisSession
-            ? [{
-                text: "Abort & Leave",
-                style: "destructive" as const,
-                onPress: () => {
-                  abortProcessing().finally(() => navigation.popToTop());
-                },
-              }]
-            : []),
-        ],
-      );
-    } else {
-      navigation.popToTop();
+  usePreventRemove(processing, ({ data }) => {
+    const leave = () => navigation.dispatch(data.action);
+    if (Platform.OS === "web") {
+      if (window.confirm("Processing is still running. Leave this page and continue in the background?")) leave();
+      return;
     }
-  };
+    const { running, sessionId } = getQueueState();
+    const isThisSession = running && sessionId === initialSession.id;
+
+    Alert.alert(
+      "Processing in progress",
+      isThisSession
+        ? "Transcription or analysis is still running. You can leave — processing will continue in the background."
+        : "Processing is still running.",
+      [
+        { text: "Wait", style: "cancel" },
+        {
+          text: isThisSession ? "Leave (background)" : "Leave",
+          style: isThisSession ? "default" : "destructive",
+          onPress: leave,
+        },
+        ...(isThisSession
+          ? [{
+              text: "Abort & Leave",
+              style: "destructive" as const,
+              onPress: () => {
+                abortProcessing().finally(leave);
+              },
+            }]
+          : []),
+      ],
+    );
+  });
+  const handleDone = () => navigation.popToTop();
 
   const summary = session.summary;
   const speakerLabeled = (summary as any)?.speakerLabeledTranscript as string | undefined;
@@ -318,7 +278,8 @@ export default function SummaryScreen() {
           : "会议记录");
 
   return (
-    <View style={styles.container}>
+    <PageEntrance style={uiStyles.page}>
+      <ScreenHeader title="Summary" back onBack={handleDone} />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>{displayTitle}</Text>
 
@@ -498,24 +459,20 @@ export default function SummaryScreen() {
             <Text style={styles.errorText}>{session.error || "Unknown error"}</Text>
             <TouchableOpacity
               style={styles.retryButton}
-              onPress={() => {
-                setSession((s) => s ? { ...s, phase: "queued", error: undefined } : s);
-                updateSessionPhase(session.id, "queued").catch(() => {});
-                startProcessing(session.id);
+              accessibilityRole="button"
+              accessibilityLabel="Retry Processing"
+              onPress={async () => {
+                try {
+                  await updateSessionPhase(session.id, "queued");
+                  setSession(s => ({ ...s, phase: "queued", error: undefined }));
+                } catch {
+                  setSession(s => ({ ...s, error: "Could not retry recording." }));
+                }
               }}
             >
+              <RotateCcw size={18} color={colors.surface} />
               <Text style={styles.retryButtonText}>Retry Processing</Text>
             </TouchableOpacity>
-            {session.transcript && (
-              <>
-                <Text style={styles.section}>Raw Transcript</Text>
-                <View style={styles.card}>
-                  <Text style={styles.transcriptText}>
-                    {session.transcript}
-                  </Text>
-                </View>
-              </>
-            )}
           </View>
         )}
 
@@ -530,39 +487,6 @@ export default function SummaryScreen() {
           </View>
         )}
 
-        {debugInfo.length > 0 && (
-          <View style={styles.debugCard}>
-            <Text style={styles.debugTitle}>Debug Info</Text>
-            {debugInfo.map((line, i) => (
-              <Text key={i} style={styles.debugText}>{line}</Text>
-            ))}
-          </View>
-        )}
-
-        {displayTranscript && !summary && (
-          <>
-            <Text style={styles.section}>Transcript</Text>
-            <View style={styles.transcriptCard}>
-              <Text style={styles.transcriptText}>
-                {displayTranscript}
-              </Text>
-            </View>
-          </>
-        )}
-
-        {displayTranscript && summary && (
-          <>
-            <Text style={styles.section}>
-              {speakerLabeled ? "Speaker-Labeled Transcript" : "Transcript"}
-            </Text>
-            <View style={styles.transcriptCard}>
-              <Text style={styles.transcriptText}>
-                {displayTranscript}
-              </Text>
-            </View>
-          </>
-        )}
-
         {summary && session.mode === "classroom-student" && (
           <StudentSummaryView summary={summary as StudentSummary} />
         )}
@@ -572,67 +496,90 @@ export default function SummaryScreen() {
         {summary && session.mode.startsWith("meeting") && (
           <MeetingSummaryView summary={summary as MeetingSummary} />
         )}
+        {displayTranscript && (
+          <View style={styles.details}>
+            <TouchableOpacity style={styles.detailsToggle} accessibilityRole="button" accessibilityLabel="Transcript"
+              accessibilityState={{ expanded: transcriptExpanded }} onPress={() => setTranscriptExpanded(value => !value)}>
+              <Text style={styles.detailsTitle}>{speakerLabeled ? "Speaker-Labeled Transcript" : "Transcript"}</Text>
+              {transcriptExpanded ? <ChevronDown size={18} color={colors.muted} /> : <ChevronRight size={18} color={colors.muted} />}
+            </TouchableOpacity>
+            {transcriptExpanded && <Text selectable style={styles.transcriptText}>{displayTranscript}</Text>}
+          </View>
+        )}
+        {debugInfo.length > 0 && (
+          <View style={styles.details}>
+            <TouchableOpacity style={styles.detailsToggle} accessibilityRole="button" accessibilityState={{ expanded: debugExpanded }}
+              onPress={() => setDebugExpanded(value => !value)}>
+              <Text style={styles.detailsTitle}>Processing log</Text>
+              {debugExpanded ? <ChevronDown size={18} color={colors.muted} /> : <ChevronRight size={18} color={colors.muted} />}
+            </TouchableOpacity>
+            {debugExpanded && debugInfo.map((line, index) => <Text key={index} style={styles.debugText}>{line}</Text>)}
+          </View>
+        )}
       </ScrollView>
 
+      {!!exportError && <Text accessibilityRole="alert" style={styles.exportError}>{exportError}</Text>}
+      {exportOpen && <View style={styles.exportOptions}>
+        {(["pdf", "markdown"] as const).map(format => <TouchableOpacity key={format} accessibilityRole="button" disabled={exporting}
+          onPress={() => void handleShare(format)} style={styles.exportOption}>
+          <FileText size={18} color={colors.accent} /><Text style={styles.detailsTitle}>{format === "pdf" ? "PDF" : "Markdown"}</Text>
+        </TouchableOpacity>)}
+      </View>}
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
-          <Text style={styles.shareButtonText}>Share</Text>
-        </TouchableOpacity>
+        <IconButton icon={Download} label="Export recording" disabled={exporting} onPress={() => setExportOpen(value => !value)} />
         <TouchableOpacity
           style={styles.doneButton}
+          accessibilityRole="button"
           onPress={handleDone}
         >
+          <Check size={18} color={colors.surface} />
           <Text style={styles.doneButtonText}>Done</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </PageEntrance>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFFFFF" },
-  content: { padding: 24, paddingTop: 60, paddingBottom: 100 },
-  title: { fontSize: 24, fontWeight: "700", color: "#1A1A1A", marginBottom: 4 },
+  content: { padding: 24, paddingTop: 4, paddingBottom: 32 },
+  title: { fontSize: 28, fontFamily: fonts.reading, color: colors.text, marginBottom: 12 },
   timeRange: {
-    fontSize: 13,
-    color: "#5F6368",
+    fontSize: 12, fontFamily: fonts.body,
+    color: colors.muted,
     marginBottom: 24,
   },
   section: {
     fontSize: 18,
-    fontWeight: "600",
-    color: "#1A1A1A",
+    fontFamily: fonts.strong,
+    color: colors.text,
     marginTop: 24,
     marginBottom: 12,
   },
   card: {
-    backgroundColor: "#F8F9FA",
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+    paddingVertical: 14,
+    marginBottom: 4,
   },
-  cardTitle: { fontSize: 15, fontWeight: "600", color: "#1A1A1A" },
-  cardDesc: { fontSize: 13, color: "#5F6368", marginTop: 4, lineHeight: 18 },
-  cardHint: { fontSize: 12, color: "#1A73E8", marginTop: 6, fontStyle: "italic" },
-  emptyText: { fontSize: 13, color: "#9AA0A6", marginBottom: 8, fontStyle: "italic" },
+  cardTitle: { fontSize: 15, fontFamily: fonts.strong, color: colors.text },
+  cardDesc: { fontSize: 14, fontFamily: fonts.body, color: colors.text, marginTop: 6, lineHeight: 23 },
+  cardHint: { fontSize: 12, fontFamily: fonts.body, color: colors.accent, marginTop: 8 },
+  emptyText: { fontSize: 13, fontFamily: fonts.body, color: colors.muted, marginBottom: 8 },
   warningCard: {
-    backgroundColor: "#FEF7E0",
-    borderRadius: 10,
-    padding: 14,
+    borderLeftWidth: 2, borderLeftColor: colors.amber,
+    paddingLeft: 14, paddingVertical: 8,
     marginBottom: 16,
   },
-  warningTitle: { fontSize: 14, fontWeight: "600", color: "#E37400" },
-  warningText: { fontSize: 13, color: "#5F6368", marginTop: 4, lineHeight: 18 },
-  example: { fontSize: 12, color: "#9AA0A6", marginTop: 2, fontStyle: "italic" },
+  warningTitle: { fontSize: 14, fontFamily: fonts.strong, color: colors.amber },
+  warningText: { fontSize: 13, fontFamily: fonts.body, color: colors.muted, marginTop: 4, lineHeight: 21 },
+  example: { fontSize: 13, fontFamily: fonts.reading, color: colors.muted, marginTop: 6 },
   headerCard: {
-    backgroundColor: "#E8F0FE",
-    borderRadius: 10,
-    padding: 14,
+    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.line,
     marginBottom: 8,
   },
-  headerText: { fontSize: 15, color: "#1A73E8", fontWeight: "500" },
-  processing: { alignItems: "center", marginTop: 60 },
-  processingTitle: { fontSize: 18, fontWeight: "600", color: "#1A1A1A", marginBottom: 32 },
+  headerText: { fontSize: 14, color: colors.accent, fontFamily: fonts.body },
+  processing: { marginTop: 20 },
+  processingTitle: { fontSize: 18, fontFamily: fonts.strong, color: colors.text, marginBottom: 24 },
   stagesContainer: { width: "100%", paddingHorizontal: 8 },
   stageRow: { flexDirection: "row", alignItems: "center", gap: 14 },
   stageIndicator: {
@@ -643,14 +590,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  stageActive: { backgroundColor: "#1A73E8" },
-  stageDone: { backgroundColor: "#34A853" },
-  stageNum: { fontSize: 14, fontWeight: "600", color: "#5F6368" },
+  stageActive: { backgroundColor: colors.accent },
+  stageDone: { backgroundColor: colors.accent },
+  stageNum: { fontSize: 14, fontFamily: fonts.strong, color: colors.muted },
   checkmark: { fontSize: 16, fontWeight: "700", color: "#FFFFFF" },
   stageTextCol: { flex: 1 },
-  stageTitle: { fontSize: 15, fontWeight: "500", color: "#5F6368" },
-  stageTitleActive: { color: "#1A1A1A", fontWeight: "600" },
-  stageHint: { fontSize: 12, color: "#9AA0A6", marginTop: 2 },
+  stageTitle: { fontSize: 15, fontFamily: fonts.strong, color: colors.muted },
+  stageTitleActive: { color: colors.text },
+  stageHint: { fontSize: 12, fontFamily: fonts.body, color: colors.muted, marginTop: 4 },
   connector: {
     width: 2,
     height: 20,
@@ -658,23 +605,22 @@ const styles = StyleSheet.create({
     marginLeft: 15,
     marginVertical: 4,
   },
-  connectorDone: { backgroundColor: "#34A853" },
+  connectorDone: { backgroundColor: colors.accent },
   errorCard: {
-    backgroundColor: "#FCE8E6",
-    borderRadius: 10,
-    padding: 14,
+    borderLeftWidth: 2, borderLeftColor: colors.red,
+    paddingLeft: 14, paddingVertical: 8,
     marginTop: 16,
   },
-  errorTitle: { fontSize: 15, fontWeight: "600", color: "#C5221F" },
-  errorText: { fontSize: 13, color: "#C5221F", marginTop: 4 },
+  errorTitle: { fontSize: 15, fontFamily: fonts.strong, color: colors.red },
+  errorText: { fontSize: 13, fontFamily: fonts.body, color: colors.red, marginTop: 4 },
   retryButton: {
     marginTop: 16,
-    backgroundColor: "#1A73E8",
+    backgroundColor: colors.accent,
     borderRadius: 8,
     paddingVertical: 12,
-    alignItems: "center",
+    alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 8,
   },
-  retryButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
+  retryButtonText: { color: colors.surface, fontSize: 14, fontFamily: fonts.strong },
   transcriptCard: {
     backgroundColor: "#F8F9FA",
     borderRadius: 10,
@@ -682,22 +628,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   transcriptText: {
-    fontSize: 13,
-    color: "#3C4043",
-    lineHeight: 20,
+    fontSize: 14, fontFamily: fonts.body,
+    color: colors.text,
+    lineHeight: 24,
   },
   actions: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
     flexDirection: "row",
     padding: 16,
-    paddingBottom: 32,
     gap: 12,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
     borderTopWidth: 1,
-    borderTopColor: "#E8EAED",
+    borderTopColor: colors.line,
   },
   shareButton: {
     flex: 1,
@@ -709,13 +650,19 @@ const styles = StyleSheet.create({
   },
   shareButtonText: { color: "#1A73E8", fontSize: 16, fontWeight: "500" },
   doneButton: {
-    flex: 1,
-    backgroundColor: "#1A73E8",
-    borderRadius: 10,
-    paddingVertical: 14,
+    marginLeft: "auto", paddingHorizontal: 24,
+    backgroundColor: colors.accent,
+    borderRadius: 8, minHeight: 44,
+    flexDirection: "row", justifyContent: "center", gap: 8,
     alignItems: "center",
   },
-  doneButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+  doneButtonText: { color: colors.surface, fontSize: 14, fontFamily: fonts.strong },
+  details: { borderTopWidth: 1, borderTopColor: colors.line, marginTop: 24 },
+  detailsToggle: { flexDirection: "row", gap: 12, alignItems: "center", minHeight: 52 },
+  detailsTitle: { flex: 1, fontSize: 14, fontFamily: fonts.strong, color: colors.muted },
+  exportOptions: { flexDirection: "row", gap: 12, paddingHorizontal: 24, paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.line },
+  exportOption: { flex: 1, minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8 },
+  exportError: { fontSize: 13, fontFamily: fonts.body, color: colors.red, paddingHorizontal: 24, paddingVertical: 8 },
   debugCard: {
     backgroundColor: "#E8F0FE",
     borderRadius: 10,
@@ -731,8 +678,8 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     width: "100%",
   },
-  streamingTitle: { fontSize: 13, fontWeight: "600", color: "#1A73E8", marginBottom: 8 },
-  streamingText: { fontSize: 12, color: "#3C4043", lineHeight: 18 },
+  streamingTitle: { fontSize: 13, fontFamily: fonts.strong, color: colors.accent, marginBottom: 8 },
+  streamingText: { fontSize: 13, fontFamily: fonts.body, color: colors.text, lineHeight: 22 },
   engagementCard: {
     backgroundColor: "#F0F4F8",
     borderRadius: 10,

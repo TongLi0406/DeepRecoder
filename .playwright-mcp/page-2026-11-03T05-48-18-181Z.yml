@@ -1,0 +1,54 @@
+- generic [ref=e8]:
+  - generic [ref=e13]:
+    - generic [ref=e14]: Recorder
+    - generic [ref=e15]: One-tap meeting & classroom intelligence
+    - generic [ref=e16]: Choose Mode
+    - generic [ref=e17]:
+      - generic [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: 📋
+        - generic [ref=e20]: Meeting — Organizer
+        - generic [ref=e21]: Decisions, action items, owners, timeline
+      - generic [ref=e22] [cursor=pointer]:
+        - generic [ref=e23]: ✏️
+        - generic [ref=e24]: Meeting — Attendee
+        - generic [ref=e25]: What matters to me, my action items, key decisions
+      - generic [ref=e26] [cursor=pointer]:
+        - generic [ref=e27]: 📖
+        - generic [ref=e28]: Classroom — Student
+        - generic [ref=e29]: Knowledge points, problem-solving methods, lesson links
+      - generic [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]: 📊
+        - generic [ref=e32]: Classroom — Teacher
+        - generic [ref=e33]: Teaching style, engagement, question analysis, suggestions
+    - generic: Select a mode above
+  - tablist [ref=e36]:
+    - tab "🎙️ 🎙️ Record" [selected] [ref=e38] [cursor=pointer]:
+      - generic [ref=e39]:
+        - generic [ref=e40]: 🎙️
+        - generic [ref=e42]: 🎙️
+      - generic [ref=e44]: Record
+    - tab "📋 📋 History" [ref=e46] [cursor=pointer]:
+      - generic [ref=e47]:
+        - generic [ref=e48]: 📋
+        - generic [ref=e50]: 📋
+      - generic [ref=e52]: History
+    - tab "🧩 🧩 Skills Summary" [ref=e54] [cursor=pointer]:
+      - generic [ref=e55]:
+        - generic [ref=e56]: 🧩
+        - generic [ref=e58]: 🧩
+      - generic [ref=e60]: Skills Summary
+    - tab "🔍 🔍 Ask" [ref=e62] [cursor=pointer]:
+      - generic [ref=e63]:
+        - generic [ref=e64]: 🔍
+        - generic [ref=e66]: 🔍
+      - generic [ref=e68]: Ask
+    - tab "📔 📔 Diary" [ref=e70] [cursor=pointer]:
+      - generic [ref=e71]:
+        - generic [ref=e72]: 📔
+        - generic [ref=e74]: 📔
+      - generic [ref=e76]: Diary
+    - tab "⚙️ ⚙️ Settings" [ref=e78] [cursor=pointer]:
+      - generic [ref=e79]:
+        - generic [ref=e80]: ⚙️
+        - generic [ref=e82]: ⚙️
+      - generic [ref=e84]: Settings

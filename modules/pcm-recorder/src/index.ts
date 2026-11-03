@@ -9,9 +9,42 @@ export interface RecordingOptions {
 
 export interface RecordingStatus {
   isRecording: boolean;
+  isPaused?: boolean;
   filePath: string | null;
   durationMs: number;
   fileSizeBytes: number;
+}
+
+export interface DiaryNativeSegment {
+  id: string;
+  filePath: string;
+  startTime: string;
+  endTime: string;
+  localDate: string;
+  utcOffsetMinutes: number;
+  durationMs: number;
+}
+
+export interface DiaryNativeStatus {
+  active: boolean;
+  paused: boolean;
+  error: string | null;
+  hasSpeakerProfile: boolean;
+  modelsReady: boolean;
+}
+
+export interface SpeakerEvidenceWindow {
+  startMs: number;
+  endMs: number;
+  speaker: 'matched' | 'unknown';
+  similarity: number | null;
+}
+
+export interface SpeakerEvidence {
+  speaker: 'matched' | 'unknown';
+  similarity: number | null;
+  profileRevision: string | null;
+  windows: SpeakerEvidenceWindow[];
 }
 
 interface PcmRecorderNativeModule {
@@ -19,8 +52,23 @@ interface PcmRecorderNativeModule {
   getStatus(): RecordingStatus;
   startRecording(options: RecordingOptions): Promise<RecordingStatus>;
   stopRecording(): Promise<RecordingStatus>;
+  pauseRecording(): Promise<RecordingStatus>;
+  resumeRecording(): Promise<RecordingStatus>;
   cancelRecording(): Promise<void>;
   deleteRecording(filePath: string): Promise<boolean>;
+
+  getDiaryStatus(): Promise<DiaryNativeStatus>;
+  prepareDiaryModels(): Promise<void>;
+  startDiary(): Promise<void>;
+  stopDiary(): Promise<void>;
+  pauseDiary(): Promise<void>;
+  resumeDiary(): Promise<void>;
+  listDiarySegments(): Promise<DiaryNativeSegment[]>;
+  deleteDiarySegment(id: string): Promise<void>;
+
+  identifySpeaker(filePath: string): Promise<SpeakerEvidence>;
+  enrollSpeaker(filePath: string): Promise<void>;
+  deleteSpeakerProfile(): Promise<void>;
 }
 
 const NativeModule = requireNativeModule<PcmRecorderNativeModule>('PcmRecorder');
@@ -30,8 +78,23 @@ export const PcmRecorder = {
   getStatus: () => NativeModule.getStatus(),
   startRecording: (options: RecordingOptions = {}) => NativeModule.startRecording(options),
   stopRecording: () => NativeModule.stopRecording(),
+  pauseRecording: () => NativeModule.pauseRecording(),
+  resumeRecording: () => NativeModule.resumeRecording(),
   cancelRecording: () => NativeModule.cancelRecording(),
   deleteRecording: (filePath: string) => NativeModule.deleteRecording(filePath),
+
+  getDiaryStatus: () => NativeModule.getDiaryStatus(),
+  prepareDiaryModels: () => NativeModule.prepareDiaryModels(),
+  startDiary: () => NativeModule.startDiary(),
+  stopDiary: () => NativeModule.stopDiary(),
+  pauseDiary: () => NativeModule.pauseDiary(),
+  resumeDiary: () => NativeModule.resumeDiary(),
+  listDiarySegments: () => NativeModule.listDiarySegments(),
+  deleteDiarySegment: (id: string) => NativeModule.deleteDiarySegment(id),
+
+  identifySpeaker: (filePath: string) => NativeModule.identifySpeaker(filePath),
+  enrollSpeaker: (filePath: string) => NativeModule.enrollSpeaker(filePath),
+  deleteSpeakerProfile: () => NativeModule.deleteSpeakerProfile(),
 };
 
 export default PcmRecorder;

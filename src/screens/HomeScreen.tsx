@@ -1,116 +1,114 @@
 import { useState, useCallback } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-} from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { View, Text, StyleSheet, Pressable, ScrollView, useWindowDimensions } from "react-native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import type { RootStackParamList } from "../../App";
-import type { SessionMode } from "../types";
+import type { Session, SessionMode } from "../types";
+import { ArrowUpRight, AudioLines, GraduationCap, Mic, Users } from "lucide-react-native";
+import { getAllSessions } from "../services/storage";
+import { colors, fonts, PageEntrance, ScreenHeader, uiStyles } from "../ui";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
 
-const MODES: { key: SessionMode; title: string; desc: string; icon: string }[] =
-  [
-    {
-      key: "meeting-organizer",
-      title: "Meeting — Organizer",
-      desc: "Decisions, action items, owners, timeline",
-      icon: "📋",
-    },
-    {
-      key: "meeting-attendee",
-      title: "Meeting — Attendee",
-      desc: "What matters to me, my action items, key decisions",
-      icon: "✏️",
-    },
-    {
-      key: "classroom-student",
-      title: "Classroom — Student",
-      desc: "Knowledge points, problem-solving methods, lesson links",
-      icon: "📖",
-    },
-    {
-      key: "classroom-teacher",
-      title: "Classroom — Teacher",
-      desc: "Teaching style, engagement, question analysis, suggestions",
-      icon: "📊",
-    },
-  ];
-
 export default function HomeScreen() {
   const navigation = useNavigation<Nav>();
-  const [selectedMode, setSelectedMode] = useState<SessionMode | null>(null);
-
-  const handleStart = useCallback(() => {
-    if (selectedMode) {
-      navigation.navigate("Recording", { mode: selectedMode });
-    }
-  }, [selectedMode, navigation]);
+  const [selectedMode, setSelectedMode] = useState<SessionMode>("meeting-attendee");
+  const [recent, setRecent] = useState<Session[]>([]);
+  const [error, setError] = useState("");
+  const wide = useWindowDimensions().width >= 900;
+  const classroom = selectedMode.startsWith("classroom");
+  const roles: { label: string; mode: SessionMode }[] = classroom
+    ? [{ label: "Student", mode: "classroom-student" }, { label: "Teacher", mode: "classroom-teacher" }]
+    : [{ label: "Attendee", mode: "meeting-attendee" }, { label: "Organizer", mode: "meeting-organizer" }];
+  useFocusEffect(useCallback(() => {
+    let current = true;
+    getAllSessions().then(sessions => { if (current) { setRecent(sessions.slice(0, 4)); setError(""); } })
+      .catch(() => { if (current) setError("Recent recordings could not be loaded."); });
+    return () => { current = false; };
+  }, []));
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Recorder</Text>
-      <Text style={styles.subtitle}>One-tap meeting & classroom intelligence</Text>
-
-      <Text style={styles.sectionTitle}>Choose Mode</Text>
-      <View style={styles.modeGrid}>
-        {MODES.map((m) => (
-          <TouchableOpacity
-            key={m.key}
-            style={[styles.modeCard, selectedMode === m.key && styles.modeCardSelected]}
-            onPress={() => setSelectedMode(m.key)}
-          >
-            <Text style={styles.modeIcon}>{m.icon}</Text>
-            <Text style={styles.modeTitle}>{m.title}</Text>
-            <Text style={styles.modeDesc}>{m.desc}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <TouchableOpacity
-        style={[styles.recordButton, !selectedMode && styles.recordButtonDisabled]}
-        onPress={handleStart}
-        disabled={!selectedMode}
-      >
-        <Text style={styles.recordButtonText}>
-          {selectedMode ? "Start Recording" : "Select a mode above"}
-        </Text>
-      </TouchableOpacity>
-
-    </ScrollView>
+    <View style={uiStyles.page}>
+      <ScreenHeader title="Recorder" caption={new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} />
+      <ScrollView contentContainerStyle={styles.content}>
+        <PageEntrance style={[styles.workspace, wide && { flexDirection: "row", gap: 48 }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={uiStyles.label}>SESSION</Text>
+            <View style={uiStyles.segmented}>
+              {[{ label: "Meeting", icon: Users, mode: "meeting-attendee" }, { label: "Classroom", icon: GraduationCap, mode: "classroom-student" }].map(item => {
+                const selected = classroom === (item.label === "Classroom");
+                const Icon = item.icon;
+                return <Pressable key={item.label} accessibilityRole="tab" accessibilityState={{ selected }}
+                  onPress={() => setSelectedMode(item.mode as SessionMode)}
+                  style={[uiStyles.segment, { flexDirection: "row", gap: 8 }, selected && uiStyles.segmentActive]}>
+                  <Icon size={18} color={selected ? colors.accent : colors.muted} strokeWidth={1.7} />
+                  <Text style={[uiStyles.segmentText, selected && { color: colors.accent }]}>{item.label}</Text>
+                </Pressable>;
+              })}
+            </View>
+            <View style={styles.roles}>
+              <Text style={[uiStyles.label, { marginBottom: 0, marginRight: 8 }]}>ROLE</Text>
+              {roles.map(item => <Pressable key={item.mode} accessibilityRole="radio" accessibilityState={{ checked: selectedMode === item.mode }}
+                onPress={() => setSelectedMode(item.mode)} style={styles.role}>
+                <View style={[styles.radio, selectedMode === item.mode && { borderColor: colors.accent }]}>
+                  {selectedMode === item.mode && <View style={styles.radioDot} />}
+                </View>
+                <Text style={[uiStyles.segmentText, selectedMode === item.mode && { color: colors.text }]}>{item.label}</Text>
+              </Pressable>)}
+            </View>
+            <View style={styles.captureArea}>
+              <View style={styles.captureOutline}>
+                <Pressable accessibilityRole="button" accessibilityLabel="Start Recording"
+                  onPress={() => navigation.navigate("Recording", { mode: selectedMode, autoStart: true })}
+                  style={({ pressed }) => [styles.recordButton, pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] }]}>
+                  <Mic size={38} color={colors.surface} strokeWidth={1.5} />
+                </Pressable>
+              </View>
+              <Text style={styles.captureTitle}>Start Recording</Text>
+              <View style={styles.ready}><View style={styles.readyDot} /><Text style={styles.readyText}>Ready</Text></View>
+            </View>
+          </View>
+          <View style={[styles.recent, wide && { width: "40%", borderTopWidth: 0, borderLeftWidth: 1, paddingLeft: 32, paddingTop: 0 }]}>
+            <Text style={uiStyles.label}>RECENT RECORDINGS</Text>
+            {error ? <Text style={[uiStyles.body, { color: colors.red }]}>{error}</Text>
+              : recent.length === 0 ? <View style={styles.empty}>
+                <AudioLines size={26} color={colors.muted} strokeWidth={1.4} />
+                <Text style={styles.emptyTitle}>No recordings yet</Text>
+                <Text style={styles.emptyCaption}>0 sessions</Text>
+              </View> : recent.map(session => <Pressable key={session.id} accessibilityRole="button"
+                accessibilityLabel={`Open ${session.title || session.courseName || "recording"}`}
+                onPress={() => navigation.navigate("Summary", { session })} style={styles.recentItem}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.recentTitle} numberOfLines={2}>{session.title || session.courseName || "Untitled recording"}</Text>
+                  <Text style={styles.emptyCaption}>{new Date(session.createdAt).toLocaleDateString()} · {Math.round(session.audioDuration / 60000)} min · {session.phase}</Text>
+                </View>
+                <ArrowUpRight size={18} color={colors.muted} />
+              </Pressable>)}
+          </View>
+        </PageEntrance>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFFFFF" },
-  content: { padding: 24, paddingTop: 60, paddingBottom: 40 },
-  title: { fontSize: 32, fontWeight: "700", color: "#1A1A1A" },
-  subtitle: { fontSize: 15, color: "#5F6368", marginTop: 4, marginBottom: 32 },
-  sectionTitle: { fontSize: 18, fontWeight: "600", color: "#1A1A1A", marginBottom: 16 },
-  modeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  modeCard: {
-    width: "47%",
-    backgroundColor: "#F8F9FA",
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  modeCardSelected: { borderColor: "#1A73E8", backgroundColor: "#E8F0FE" },
-  modeIcon: { fontSize: 24, marginBottom: 8 },
-  modeTitle: { fontSize: 14, fontWeight: "600", color: "#1A1A1A" },
-  modeDesc: { fontSize: 12, color: "#5F6368", marginTop: 4, lineHeight: 16 },
-  recordButton: {
-    marginTop: 32,
-    backgroundColor: "#1A73E8",
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  recordButtonDisabled: { backgroundColor: "#DADCE0" },
-  recordButtonText: { color: "#FFFFFF", fontSize: 17, fontWeight: "600" },
+  content: { paddingHorizontal: 24, paddingBottom: 32 },
+  workspace: { paddingTop: 12 },
+  roles: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 12, marginTop: 14 },
+  role: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 6 },
+  radio: { width: 16, height: 16, borderRadius: 8, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
+  radioDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent },
+  captureArea: { alignItems: "center", paddingVertical: 34, gap: 12 },
+  captureOutline: { width: 160, height: 160, borderRadius: 80, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
+  recordButton: { width: 124, height: 124, borderRadius: 62, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center" },
+  captureTitle: { fontFamily: fonts.strong, fontSize: 17, color: colors.text, marginTop: 8 },
+  ready: { flexDirection: "row", gap: 6, alignItems: "center" },
+  readyDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.accent },
+  readyText: { fontFamily: fonts.body, fontSize: 12, color: colors.muted },
+  recent: { borderTopWidth: 1, borderColor: colors.line, paddingTop: 24 },
+  empty: { paddingVertical: 18, gap: 10 },
+  emptyTitle: { fontFamily: fonts.strong, fontSize: 15, color: colors.text },
+  emptyCaption: { fontFamily: fonts.body, fontSize: 12, color: colors.muted, marginTop: 4 },
+  recentItem: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: colors.line },
+  recentTitle: { fontFamily: fonts.strong, fontSize: 15, color: colors.text },
 });

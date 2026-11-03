@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { generateEmbedding } from "./embedding";
 import { debugLog } from "./debug";
+import { checkAbort } from "./llmContext";
 
 // ─── In-Memory Store (Web) ───
 
@@ -56,19 +57,20 @@ export interface SearchResult {
 export async function insertEmbedding(
   sessionId: string, contentType: string, contentText: string, embedding: number[],
 ): Promise<void> {
-  const id = `emb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const id = JSON.stringify([sessionId, contentType, contentText]);
   const row: EmbeddingRow = {
     id, sessionId, contentType, contentText, embedding,
     createdAt: new Date().toISOString(),
   };
 
   if (Platform.OS === "web") {
-    memEmbeds.push(row);
+    const index = memEmbeds.findIndex(existing => existing.id === id);
+    if (index < 0) memEmbeds.push(row); else memEmbeds[index] = row;
     return;
   }
   const d = await getNativeDb();
   await d.runAsync(
-    `INSERT INTO embeddings (id, session_id, content_type, content_text, embedding, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO embeddings (id, session_id, content_type, content_text, embedding, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
     id, sessionId, contentType, contentText, JSON.stringify(embedding), row.createdAt,
   );
 }
@@ -87,6 +89,7 @@ export async function getAllEmbeddings(): Promise<EmbeddingRow[]> {
 // ─── Similarity Search ───
 
 export function cosineSim(a: number[], b: number[]): number {
+  if (!a.length || a.length !== b.length || !a.every(Number.isFinite) || !b.every(Number.isFinite)) return 0;
   let da = 0, db = 0, s = 0;
   for (let i = 0; i < a.length; i++) { s += a[i] * b[i]; da += a[i] * a[i]; db += b[i] * b[i]; }
   if (da === 0 || db === 0) return 0;
@@ -129,7 +132,7 @@ export async function vectorSearch(queryEmbedding: number[], topK = 10): Promise
 
 // ─── Index Session ───
 
-export async function indexSessionSummaries(sessionId: string, summary: any): Promise<void> {
+export async function indexSessionSummaries(sessionId: string, summary: any, signal?: AbortSignal): Promise<void> {
   const items: { type: string; text: string }[] = [];
   if (summary.knowledgePoints) {
     for (const kp of summary.knowledgePoints) {
@@ -154,18 +157,14 @@ export async function indexSessionSummaries(sessionId: string, summary: any): Pr
 
   debugLog(`[VectorStore] Indexing ${items.length} items for session ${sessionId.slice(0, 8)}...`);
   let indexed = 0;
-  let failed = 0;
   for (const item of items) {
-    try {
+      checkAbort(signal);
       const emb = await generateEmbedding(item.text);
+      checkAbort(signal);
       await insertEmbedding(sessionId, item.type, item.text, emb);
       indexed++;
-    } catch (e: any) {
-      failed++;
-      debugLog(`[VectorStore] Failed to index ${item.type}: ${e?.message || e}`);
-    }
   }
-  debugLog(`[VectorStore] Indexed ${indexed}/${items.length} items (${failed} failed)`);
+  debugLog(`[VectorStore] Indexed ${indexed}/${items.length} items`);
 }
 
 // ─── Keyword Search ───

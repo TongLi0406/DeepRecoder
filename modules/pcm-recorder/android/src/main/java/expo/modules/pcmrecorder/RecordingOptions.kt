@@ -22,6 +22,9 @@ class RecordingStatus : Record {
   var isRecording: Boolean = false
 
   @Field
+  var isPaused: Boolean = false
+
+  @Field
   var filePath: String? = null
 
   @Field

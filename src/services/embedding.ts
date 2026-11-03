@@ -20,23 +20,23 @@ export async function getSiliconFlowKey(): Promise<string | null> {
 }
 
 export async function saveSiliconFlowKey(key: string): Promise<void> {
-  sfKeyCache = key;
   if (Platform.OS === "web") {
-    try { localStorage.setItem(SF_KEY_STORAGE, key); } catch {}
+    localStorage.setItem(SF_KEY_STORAGE, key);
   } else {
     const SecureStore = await import("expo-secure-store");
     await SecureStore.setItemAsync(SF_KEY_STORAGE, key);
   }
+  sfKeyCache = key;
 }
 
 export async function deleteSiliconFlowKey(): Promise<void> {
-  sfKeyCache = null;
   if (Platform.OS === "web") {
-    try { localStorage.removeItem(SF_KEY_STORAGE); } catch {}
+    localStorage.removeItem(SF_KEY_STORAGE);
   } else {
     const SecureStore = await import("expo-secure-store");
     await SecureStore.deleteItemAsync(SF_KEY_STORAGE);
   }
+  sfKeyCache = null;
 }
 
 export async function hasSiliconFlowKey(): Promise<boolean> {

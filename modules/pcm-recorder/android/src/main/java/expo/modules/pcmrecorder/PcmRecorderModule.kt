@@ -5,40 +5,53 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.util.Log
 import androidx.core.content.ContextCompat
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
-import java.io.FileOutputStream
 import java.io.RandomAccessFile
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.math.log10
-import kotlin.math.sqrt
 
 class PcmRecorderModule : Module() {
 
   companion object {
-    private const val TAG = "PcmRecorder"
-    private const val BITS_PER_SAMPLE: Short = 16
-    private const val NUM_CHANNELS: Short = 1
+    private const val DEFAULT_SPEAKER_MODEL = "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
+    private const val DEFAULT_VAD_MODEL = "silero_vad.onnx"
+    private const val MAX_SPEAKER_WAV_BYTES = 64L * 1024L * 1024L
 
     private val AUDIO_SOURCES = intArrayOf(
       MediaRecorder.AudioSource.VOICE_RECOGNITION,
       MediaRecorder.AudioSource.MIC,
       MediaRecorder.AudioSource.DEFAULT
     )
+
+    private val ordinaryActive = AtomicBoolean(false)
+
+    fun ordinaryRecordingActive(): Boolean = ordinaryActive.get()
+
+    fun resolveDiaryModelPaths(filesDir: File): DiaryModelPaths {
+      val modelDir = DiaryPaths.modelRoot(filesDir)
+      val speaker = File(modelDir, DEFAULT_SPEAKER_MODEL)
+      val vad = File(modelDir, DEFAULT_VAD_MODEL)
+      return DiaryModelPaths(
+        speakerModelPath = speaker.absolutePath,
+        vadModelPath = vad.absolutePath,
+        ready = speaker.exists() && vad.exists(),
+      )
+    }
   }
 
   private var audioRecord: AudioRecord? = null
   private var recordingThread: Thread? = null
   private val isRecordingFlag = AtomicBoolean(false)
+  private val isPausedFlag = AtomicBoolean(false)
+  private val pauseLock = Object()
   private val startTimeMs = AtomicLong(0)
+  private val capturedSamples = AtomicLong(0)
   private var currentFilePath: String? = null
+  private var currentWavFile: File? = null
   private var currentSampleRate: Int = 16000
 
   override fun definition() = ModuleDefinition {
@@ -61,8 +74,9 @@ class PcmRecorderModule : Module() {
     Function("getStatus") {
       val status = mapOf(
         "isRecording" to isRecordingFlag.get(),
+        "isPaused" to isPausedFlag.get(),
         "filePath" to currentFilePath,
-        "durationMs" to if (isRecordingFlag.get()) System.currentTimeMillis() - startTimeMs.get() else 0L,
+        "durationMs" to ((capturedSamples.get() * 1000L) / currentSampleRate.toLong()),
         "fileSizeBytes" to (currentFilePath?.let { File(it).let { if (it.exists()) it.length() else 0L } } ?: 0L)
       )
       status
@@ -76,6 +90,11 @@ class PcmRecorderModule : Module() {
       val context = appContext.reactContext
         ?: throw CodedException("React context not available")
 
+      val manifest = DiaryManifestStore.load(context.filesDir)
+      if (manifest.active || DiaryForegroundService.serviceActive) {
+        throw CodedException("Diary capture is active")
+      }
+
       if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
           != PackageManager.PERMISSION_GRANTED) {
         throw CodedException("RECORD_AUDIO permission not granted")
@@ -84,7 +103,9 @@ class PcmRecorderModule : Module() {
       currentSampleRate = options.sampleRate ?: 16000
 
       val fileName = options.fileName ?: "pcm_${System.currentTimeMillis()}.wav"
-      val outputFile = File(context.cacheDir, fileName)
+        val outputDir = File(context.filesDir, "pcm-recordings")
+        outputDir.mkdirs()
+        val outputFile = File(outputDir, fileName)
       if (outputFile.exists()) outputFile.delete()
 
       val bufferSize = AudioRecord.getMinBufferSize(
@@ -100,10 +121,16 @@ class PcmRecorderModule : Module() {
       audioRecord = createAudioRecord(currentSampleRate, actualBufferSize)
         ?: throw CodedException("Failed to initialize AudioRecord")
 
+      WavIo.writePlaceholderHeader(outputFile, currentSampleRate)
+
       audioRecord!!.startRecording()
       isRecordingFlag.set(true)
+      ordinaryActive.set(true)
+      isPausedFlag.set(false)
       startTimeMs.set(System.currentTimeMillis())
+      capturedSamples.set(0)
       currentFilePath = outputFile.absolutePath
+      currentWavFile = outputFile
 
       recordingThread = Thread({
         writeWavFile(outputFile, actualBufferSize)
@@ -124,18 +151,23 @@ class PcmRecorderModule : Module() {
       }
 
       isRecordingFlag.set(false)
+      try { audioRecord?.stop() } catch (_: Exception) {}
+
       recordingThread?.let { thread ->
         try { thread.join(10_000) } catch (_: InterruptedException) {}
       }
       recordingThread = null
 
-      try { audioRecord?.stop() } catch (_: Exception) {}
       audioRecord?.release()
       audioRecord = null
+      ordinaryActive.set(false)
+      isPausedFlag.set(false)
+
+      currentWavFile?.let { WavIo.finalizeHeader(it, currentSampleRate) }
 
       val filePath = currentFilePath
-      val durationMs = System.currentTimeMillis() - startTimeMs.get()
-      val fileSize = filePath?.let { File(it).let { if (it.exists()) it.length() else 0L } } ?: 0L
+      val durationMs = (capturedSamples.get() * 1000L) / currentSampleRate.toLong()
+      val fileSize = filePath?.let { File(it).let { f -> if (f.exists()) f.length() else 0L } } ?: 0L
 
       sendEvent("onRecordingStopped", mapOf(
         "filePath" to filePath,
@@ -145,28 +177,194 @@ class PcmRecorderModule : Module() {
 
       mapOf(
         "isRecording" to false,
+        "isPaused" to false,
         "filePath" to filePath,
         "durationMs" to durationMs,
         "fileSizeBytes" to fileSize
       )
     }
 
-    AsyncFunction("cancelRecording") {
-      if (isRecordingFlag.get()) {
-        isRecordingFlag.set(false)
-        recordingThread?.let { try { it.join(5_000) } catch (_: InterruptedException) {} }
-        recordingThread = null
-        try { audioRecord?.stop() } catch (_: Exception) {}
-        audioRecord?.release()
-        audioRecord = null
-        currentFilePath?.let { File(it).delete() }
-        currentFilePath = null
+    AsyncFunction("pauseRecording") {
+      if (!isRecordingFlag.get()) {
+        throw CodedException("Not recording")
       }
+      isPausedFlag.set(true)
+      mapOf(
+        "isRecording" to true,
+        "isPaused" to true,
+        "filePath" to currentFilePath,
+        "durationMs" to (capturedSamples.get() * 1000L) / currentSampleRate.toLong(),
+        "fileSizeBytes" to (currentFilePath?.let { path -> File(path).let { if (it.exists()) it.length() else 0L } } ?: 0L)
+      )
+    }
+
+    AsyncFunction("resumeRecording") {
+      if (!isRecordingFlag.get()) {
+        throw CodedException("Not recording")
+      }
+      isPausedFlag.set(false)
+      synchronized(pauseLock) {
+        pauseLock.notifyAll()
+      }
+      mapOf(
+        "isRecording" to true,
+        "isPaused" to false,
+        "filePath" to currentFilePath,
+        "durationMs" to (capturedSamples.get() * 1000L) / currentSampleRate.toLong(),
+        "fileSizeBytes" to (currentFilePath?.let { path -> File(path).let { if (it.exists()) it.length() else 0L } } ?: 0L)
+      )
+    }
+
+    AsyncFunction("cancelRecording") {
+      isRecordingFlag.set(false)
+      isPausedFlag.set(false)
+      ordinaryActive.set(false)
+      synchronized(pauseLock) {
+        pauseLock.notifyAll()
+      }
+
+      try { audioRecord?.stop() } catch (_: Exception) {}
+      recordingThread?.let { thread ->
+        try { thread.join(5_000) } catch (_: InterruptedException) {}
+      }
+      recordingThread = null
+
+      audioRecord?.release()
+      audioRecord = null
+
+      currentFilePath?.let { File(it).delete() }
+      currentFilePath = null
+      currentWavFile = null
+      capturedSamples.set(0)
       true
     }
 
     AsyncFunction("deleteRecording") { filePath: String ->
       File(filePath).let { if (it.exists()) it.delete() else false }
+    }
+
+    AsyncFunction("getDiaryStatus") {
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      val manifest = DiaryManifestStore.load(context.filesDir)
+      val modelPaths = resolveDiaryModelPaths(context.filesDir)
+      mapOf(
+        "active" to (manifest.active || DiaryForegroundService.serviceActive),
+        "paused" to manifest.paused,
+        "error" to manifest.error,
+        "hasSpeakerProfile" to SherpaSpeaker.hasProfile(context),
+        "modelsReady" to modelPaths.ready,
+      )
+    }
+
+    AsyncFunction("prepareDiaryModels") {
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      DiaryPaths.ensureAll(context.filesDir)
+
+      val modelDir = DiaryPaths.modelRoot(context.filesDir)
+      copyAssetIfExists(context, "sherpa/$DEFAULT_VAD_MODEL", File(modelDir, DEFAULT_VAD_MODEL))
+      copyAssetIfExists(context, "sherpa/$DEFAULT_SPEAKER_MODEL", File(modelDir, DEFAULT_SPEAKER_MODEL))
+
+      val modelPaths = resolveDiaryModelPaths(context.filesDir)
+      if (!modelPaths.ready) {
+        throw CodedException("models_not_ready: missing $DEFAULT_VAD_MODEL or $DEFAULT_SPEAKER_MODEL")
+      }
+
+      try {
+        SherpaVad(modelPaths.vadModelPath).release()
+      } catch (e: Throwable) {
+        throw CodedException("vad_model_invalid_or_aar_missing", e)
+      }
+
+      true
+    }
+
+    AsyncFunction("startDiary") {
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      if (isRecordingFlag.get()) {
+        throw CodedException("Ordinary PCM recording is active")
+      }
+      if (DiaryForegroundService.serviceActive || DiaryManifestStore.load(context.filesDir).active) {
+        return@AsyncFunction true
+      }
+      val modelPaths = resolveDiaryModelPaths(context.filesDir)
+      if (!modelPaths.ready) {
+        throw CodedException("models_not_ready")
+      }
+      DiaryForegroundService.start(context)
+      true
+    }
+
+    AsyncFunction("stopDiary") {
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      DiaryForegroundService.stop(context)
+      true
+    }
+
+    AsyncFunction("pauseDiary") {
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      DiaryForegroundService.pause(context)
+      true
+    }
+
+    AsyncFunction("resumeDiary") {
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      DiaryForegroundService.resume(context)
+      true
+    }
+
+    AsyncFunction("listDiarySegments") {
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      DiaryManifestStore.recover(context.filesDir).segments.map {
+        mapOf(
+          "id" to it.id,
+          "filePath" to it.filePath,
+          "startTime" to it.startTime,
+          "endTime" to it.endTime,
+          "localDate" to it.localDate,
+          "utcOffsetMinutes" to it.utcOffsetMinutes,
+          "durationMs" to it.durationMs,
+        )
+      }
+    }
+
+    AsyncFunction("deleteDiarySegment") { id: String ->
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      val manifest = DiaryManifestStore.load(context.filesDir)
+      if (manifest.active && manifest.current?.id == id) {
+        throw CodedException("segment_active")
+      }
+      val seg = manifest.segments.firstOrNull { it.id == id }
+      DiaryManifestStore.deleteSegment(context.filesDir, id)
+      seg?.let { File(it.filePath).delete() }
+      true
+    }
+
+    AsyncFunction("identifySpeaker") { filePath: String ->
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      val modelPaths = resolveDiaryModelPaths(context.filesDir)
+      if (!modelPaths.ready) {
+        throw CodedException("models_not_ready")
+      }
+      val wavFile = resolveTrustedWavFile(context, filePath)
+      val result = SherpaSpeaker.identify(context, modelPaths.speakerModelPath, wavFile.absolutePath)
+      speakerEvidenceToMap(result)
+    }
+
+    AsyncFunction("enrollSpeaker") { filePath: String ->
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      val modelPaths = resolveDiaryModelPaths(context.filesDir)
+      if (!modelPaths.ready) {
+        throw CodedException("models_not_ready")
+      }
+      val wavFile = resolveTrustedWavFile(context, filePath)
+      SherpaSpeaker.enroll(context, modelPaths.speakerModelPath, wavFile.absolutePath)
+      true
+    }
+
+    AsyncFunction("deleteSpeakerProfile") {
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      SherpaSpeaker.deleteProfile(context)
+      true
     }
   }
 
@@ -183,58 +381,114 @@ class PcmRecorderModule : Module() {
   }
 
   private fun writeWavFile(outputFile: File, bufferSize: Int) {
-    FileOutputStream(outputFile).use { fos ->
+    RandomAccessFile(outputFile, "rw").use { raf ->
       try {
-        fos.write(ByteArray(44))
-        val readBuffer = ByteArray(bufferSize)
-        var totalPcmBytes: Long = 0
+        raf.seek(44)
+        val shorts = ShortArray(bufferSize / 2)
 
         while (isRecordingFlag.get()) {
-          val bytesRead = audioRecord?.read(readBuffer, 0, readBuffer.size) ?: -1
-          when {
-            bytesRead > 0 -> {
-              fos.write(readBuffer, 0, bytesRead)
-              totalPcmBytes += bytesRead
+          if (isPausedFlag.get()) {
+            synchronized(pauseLock) {
+              while (isPausedFlag.get() && isRecordingFlag.get()) {
+                pauseLock.wait()
+              }
             }
-            bytesRead == 0 -> Thread.sleep(5)
-            else -> break
+            if (!isRecordingFlag.get()) {
+              break
+            }
           }
+
+          val samplesRead = audioRecord?.read(shorts, 0, shorts.size) ?: -1
+          if (samplesRead == 0) {
+            continue
+          }
+          if (samplesRead < 0) {
+            if (samplesRead != AudioRecord.ERROR_DEAD_OBJECT) {
+              sendEvent("onRecordingError", mapOf("error" to "audio_read_error_$samplesRead"))
+              break
+            }
+            continue
+          }
+
+          val bytes = ByteArray(samplesRead * 2)
+          var i = 0
+          while (i < samplesRead) {
+            val value = shorts[i].toInt()
+            bytes[i * 2] = (value and 0xFF).toByte()
+            bytes[i * 2 + 1] = ((value ushr 8) and 0xFF).toByte()
+            i += 1
+          }
+          raf.write(bytes)
+          capturedSamples.addAndGet(samplesRead.toLong())
         }
-        fos.flush()
-        writeWavHeader(outputFile, totalPcmBytes)
-        Log.i(TAG, "WAV complete: ${outputFile.name}, ${totalPcmBytes}B")
-      } catch (e: Exception) {
-        Log.e(TAG, "writeWavFile error", e)
+        raf.fd.sync()
+      } catch (_: Exception) {
       }
     }
-  }
-
-  private fun writeWavHeader(file: File, pcmDataSize: Long) {
-    val byteRate = currentSampleRate * NUM_CHANNELS * BITS_PER_SAMPLE / 8
-    val blockAlign = NUM_CHANNELS * BITS_PER_SAMPLE / 8
-    val safeDataSize = minOf(pcmDataSize, (Int.MAX_VALUE - 36).toLong())
-
-    val header = ByteBuffer.allocate(44).apply {
-      order(ByteOrder.LITTLE_ENDIAN)
-      put('R'.code.toByte()); put('I'.code.toByte()); put('F'.code.toByte()); put('F'.code.toByte())
-      putInt((36 + safeDataSize).toInt())
-      put('W'.code.toByte()); put('A'.code.toByte()); put('V'.code.toByte()); put('E'.code.toByte())
-      put('f'.code.toByte()); put('m'.code.toByte()); put('t'.code.toByte()); put(' '.code.toByte())
-      putInt(16); putShort(1); putShort(NUM_CHANNELS); putInt(currentSampleRate)
-      putInt(byteRate); putShort(blockAlign.toShort()); putShort(BITS_PER_SAMPLE)
-      put('d'.code.toByte()); put('a'.code.toByte()); put('t'.code.toByte()); put('a'.code.toByte())
-      putInt(safeDataSize.toInt())
-    }
-
-    RandomAccessFile(file, "rw").use { it.seek(0); it.write(header.array()) }
+    WavIo.finalizeHeader(outputFile, currentSampleRate)
   }
 
   private fun forceCleanup() {
     isRecordingFlag.set(false)
+    isPausedFlag.set(false)
+    ordinaryActive.set(false)
+    synchronized(pauseLock) {
+      pauseLock.notifyAll()
+    }
     recordingThread?.let { try { it.join(3_000); if (it.isAlive) it.interrupt() } catch (_: Exception) {} }
     recordingThread = null
     try { audioRecord?.stop() } catch (_: Exception) {}
     audioRecord?.release()
     audioRecord = null
+    currentWavFile?.let { WavIo.finalizeHeader(it, currentSampleRate) }
+
+    val context = appContext.reactContext
+    if (context != null) {
+      DiaryForegroundService.recoverManifest(context.filesDir)
+    }
+  }
+
+  private fun copyAssetIfExists(context: android.content.Context, assetPath: String, outFile: File) {
+    try {
+      context.assets.open(assetPath).use { input ->
+        outFile.parentFile?.mkdirs()
+        outFile.outputStream().use { output -> input.copyTo(output) }
+      }
+    } catch (_: Exception) {
+    }
+  }
+
+  private fun resolveTrustedWavFile(context: android.content.Context, path: String): File {
+    val file = try {
+      File(path).canonicalFile
+    } catch (e: Exception) {
+      throw CodedException("invalid_audio_path", e)
+    }
+    if (!file.exists() || !file.isFile) {
+      throw CodedException("audio_file_not_found")
+    }
+    if (file.length() <= 0L || file.length() > MAX_SPEAKER_WAV_BYTES) {
+      throw CodedException("audio_file_size_invalid")
+    }
+
+    val roots = listOfNotNull(
+      context.filesDir?.canonicalFile,
+      context.noBackupFilesDir?.canonicalFile,
+      context.cacheDir?.canonicalFile,
+      context.getExternalFilesDir(null)?.canonicalFile,
+    )
+    val trusted = roots.any { root ->
+      file.path == root.path || file.path.startsWith(root.path + File.separator)
+    }
+    if (!trusted) {
+      throw CodedException("audio_path_not_trusted")
+    }
+    return file
   }
 }
+
+data class DiaryModelPaths(
+  val speakerModelPath: String,
+  val vadModelPath: String,
+  val ready: Boolean,
+)

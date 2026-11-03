@@ -1,0 +1,7 @@
+[     384ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:8094/index.ts.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable:2105
+[     429ms] [LOG] Running application "main" with appParams:
+ {rootTag: #root, hydrate: undefined} 
+Development-level warnings: ON.
+Performance optimizations: OFF. @ http://localhost:8094/index.ts.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable:2105
+[     469ms] [WARNING] props.pointerEvents is deprecated. Use style.pointerEvents @ http://localhost:8094/index.ts.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable:2105
+[     825ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ https://api.deepseek.com/anthropic/v1/models:0

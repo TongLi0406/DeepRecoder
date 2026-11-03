@@ -1,0 +1,14 @@
+- generic [ref=f2e268]:
+  - generic [ref=f2e269]:
+    - button "Back" [ref=f2e270] [cursor=pointer]
+    - generic [ref=f2e273]: Diary Settings
+  - generic [ref=f2e276]:
+    - generic [ref=f2e277]: Background capture requires Android
+    - button "Privacy & Capture" [ref=f2e278] [cursor=pointer]
+    - generic [ref=f2e283]:
+      - generic [ref=f2e284]: Retention
+      - generic [ref=f2e285]: "Keep raw audio for:"
+      - generic [ref=f2e286]:
+        - radio "1 day" [ref=f2e287] [cursor=pointer]
+        - radio "7 days" [ref=f2e289] [cursor=pointer]
+        - radio "30 days" [ref=f2e291] [cursor=pointer]
