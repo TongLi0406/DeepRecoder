@@ -45,6 +45,9 @@ yarn-error.*
 *.apk
 *.aab
 
+# Native module build intermediates
+modules/*/android/build/
+
 # Temp files
 *.jpg
 *.jpg:Zone.Identifier
