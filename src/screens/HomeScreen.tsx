@@ -6,7 +6,7 @@ import type { RootStackParamList } from "../../App";
 import type { Session, SessionMode } from "../types";
 import { ArrowUpRight, AudioLines, GraduationCap, Mic, Users } from "lucide-react-native";
 import { getAllSessions } from "../services/storage";
-import { colors, fonts, PageEntrance, ScreenHeader, uiStyles } from "../ui";
+import { colors, fonts, PageEntrance, PHASE_LABELS, ScreenHeader, uiStyles } from "../ui";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
 
@@ -18,25 +18,25 @@ export default function HomeScreen() {
   const wide = useWindowDimensions().width >= 900;
   const classroom = selectedMode.startsWith("classroom");
   const roles: { label: string; mode: SessionMode }[] = classroom
-    ? [{ label: "Student", mode: "classroom-student" }, { label: "Teacher", mode: "classroom-teacher" }]
-    : [{ label: "Attendee", mode: "meeting-attendee" }, { label: "Organizer", mode: "meeting-organizer" }];
+    ? [{ label: "学生", mode: "classroom-student" }, { label: "教师", mode: "classroom-teacher" }]
+    : [{ label: "参会者", mode: "meeting-attendee" }, { label: "主持人", mode: "meeting-organizer" }];
   useFocusEffect(useCallback(() => {
     let current = true;
     getAllSessions().then(sessions => { if (current) { setRecent(sessions.slice(0, 4)); setError(""); } })
-      .catch(() => { if (current) setError("Recent recordings could not be loaded."); });
+      .catch(() => { if (current) setError("最近录音加载失败。"); });
     return () => { current = false; };
   }, []));
 
   return (
     <View style={uiStyles.page}>
-      <ScreenHeader title="Recorder" caption={new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} />
+      <ScreenHeader title="录音" caption={new Date().toLocaleDateString("zh-CN", { weekday: "long", month: "long", day: "numeric" })} />
       <ScrollView contentContainerStyle={styles.content}>
         <PageEntrance style={[styles.workspace, wide && { flexDirection: "row", gap: 48 }]}>
           <View style={{ flex: 1 }}>
-            <Text style={uiStyles.label}>SESSION</Text>
+            <Text style={uiStyles.label}>会话类型</Text>
             <View style={uiStyles.segmented}>
-              {[{ label: "Meeting", icon: Users, mode: "meeting-attendee" }, { label: "Classroom", icon: GraduationCap, mode: "classroom-student" }].map(item => {
-                const selected = classroom === (item.label === "Classroom");
+              {[{ label: "会议", icon: Users, mode: "meeting-attendee" }, { label: "课堂", icon: GraduationCap, mode: "classroom-student" }].map(item => {
+                const selected = classroom === (item.label === "课堂");
                 const Icon = item.icon;
                 return <Pressable key={item.label} accessibilityRole="tab" accessibilityState={{ selected }}
                   onPress={() => setSelectedMode(item.mode as SessionMode)}
@@ -47,7 +47,7 @@ export default function HomeScreen() {
               })}
             </View>
             <View style={styles.roles}>
-              <Text style={[uiStyles.label, { marginBottom: 0, marginRight: 8 }]}>ROLE</Text>
+              <Text style={[uiStyles.label, { marginBottom: 0, marginRight: 8 }]}>我的角色</Text>
               {roles.map(item => <Pressable key={item.mode} accessibilityRole="radio" accessibilityState={{ checked: selectedMode === item.mode }}
                 onPress={() => setSelectedMode(item.mode)} style={styles.role}>
                 <View style={[styles.radio, selectedMode === item.mode && { borderColor: colors.accent }]}>
@@ -58,29 +58,29 @@ export default function HomeScreen() {
             </View>
             <View style={styles.captureArea}>
               <View style={styles.captureOutline}>
-                <Pressable accessibilityRole="button" accessibilityLabel="Start Recording"
+                <Pressable accessibilityRole="button" accessibilityLabel="开始录音"
                   onPress={() => navigation.navigate("Recording", { mode: selectedMode, autoStart: true })}
                   style={({ pressed }) => [styles.recordButton, pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] }]}>
                   <Mic size={38} color={colors.surface} strokeWidth={1.5} />
                 </Pressable>
               </View>
-              <Text style={styles.captureTitle}>Start Recording</Text>
-              <View style={styles.ready}><View style={styles.readyDot} /><Text style={styles.readyText}>Ready</Text></View>
+              <Text style={styles.captureTitle}>开始录音</Text>
+              <View style={styles.ready}><View style={styles.readyDot} /><Text style={styles.readyText}>就绪</Text></View>
             </View>
           </View>
           <View style={[styles.recent, wide && { width: "40%", borderTopWidth: 0, borderLeftWidth: 1, paddingLeft: 32, paddingTop: 0 }]}>
-            <Text style={uiStyles.label}>RECENT RECORDINGS</Text>
+            <Text style={uiStyles.label}>最近录音</Text>
             {error ? <Text style={[uiStyles.body, { color: colors.red }]}>{error}</Text>
               : recent.length === 0 ? <View style={styles.empty}>
                 <AudioLines size={26} color={colors.muted} strokeWidth={1.4} />
-                <Text style={styles.emptyTitle}>No recordings yet</Text>
-                <Text style={styles.emptyCaption}>0 sessions</Text>
+                <Text style={styles.emptyTitle}>暂无录音</Text>
+                <Text style={styles.emptyCaption}>0 个会话</Text>
               </View> : recent.map(session => <Pressable key={session.id} accessibilityRole="button"
-                accessibilityLabel={`Open ${session.title || session.courseName || "recording"}`}
+                accessibilityLabel={`打开 ${session.title || session.courseName || "录音"}`}
                 onPress={() => navigation.navigate("Summary", { session })} style={styles.recentItem}>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.recentTitle} numberOfLines={2}>{session.title || session.courseName || "Untitled recording"}</Text>
-                  <Text style={styles.emptyCaption}>{new Date(session.createdAt).toLocaleDateString()} · {Math.round(session.audioDuration / 60000)} min · {session.phase}</Text>
+                  <Text style={styles.recentTitle} numberOfLines={2}>{session.title || session.courseName || "未命名录音"}</Text>
+                  <Text style={styles.emptyCaption}>{new Date(session.createdAt).toLocaleDateString("zh-CN")} · {Math.round(session.audioDuration / 60000)} 分钟 · {PHASE_LABELS[session.phase] ?? session.phase}</Text>
                 </View>
                 <ArrowUpRight size={18} color={colors.muted} />
               </Pressable>)}

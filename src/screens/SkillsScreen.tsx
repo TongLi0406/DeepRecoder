@@ -36,7 +36,7 @@ export default function SkillsScreen() {
       setSkills(all);
       const candidates = await findConsolidationCandidates(all, 0.70);
       setCandidateCount(candidates.length);
-    } catch { setFeedback("Could not load skills."); }
+    } catch { setFeedback("无法加载技能。"); }
     finally { setLoading(false); }
   }, []);
 
@@ -51,7 +51,7 @@ export default function SkillsScreen() {
     try {
       await exportDocument(format, "skills_summary", format === "pdf" ? skillsToHtml(skills) : skillsToMarkdown(skills));
       setExportOpen(false);
-    } catch (error: any) { setFeedback(error.message ?? "Export failed."); }
+    } catch (error: any) { setFeedback(error.message ?? "导出失败。"); }
     finally { setExporting(false); }
   }, [skills]);
 
@@ -61,12 +61,12 @@ export default function SkillsScreen() {
       const result: ConsolidationResult = await quickConsolidation(0.70);
       const msg =
         result.merged.length > 0
-          ? `Merged ${result.merged.length} skill pairs. ${result.skipped.length} skipped.`
-          : "No skills to merge yet. Record more sessions to build your skill library.";
+          ? `已合并 ${result.merged.length} 组技能，跳过 ${result.skipped.length} 组。`
+          : "暂无可合并的技能。多录制一些会话即可积累技能库。";
       setFeedback(msg);
       await loadSkills();
     } catch (e: any) {
-      setFeedback(e.message ?? "Consolidation failed");
+      setFeedback(e.message ?? "技能合并失败");
     } finally {
       setConsolidating(false);
     }
@@ -83,9 +83,9 @@ export default function SkillsScreen() {
   return (
     <PageEntrance style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.subtitle}>{skills.length} skills</Text>
+        <Text style={styles.subtitle}>{skills.length} 个技能</Text>
         {skills.length > 0 && (
-          <IconButton icon={Download} label="Export Skills" disabled={exporting} onPress={() => setExportOpen(value => !value)} />
+          <IconButton icon={Download} label="导出技能" disabled={exporting} onPress={() => setExportOpen(value => !value)} />
         )}
       </View>
       {!!feedback && <Text accessibilityRole="alert" style={styles.feedback}>{feedback}</Text>}
@@ -108,7 +108,7 @@ export default function SkillsScreen() {
             <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
             <Text style={styles.consolidateButtonText}>
-              Consolidate ({candidateCount})
+              合并（{candidateCount}）
             </Text>
           )}
         </TouchableOpacity>
@@ -118,7 +118,7 @@ export default function SkillsScreen() {
         <View style={styles.empty}>
           <Layers size={32} color={colors.muted} strokeWidth={1.3} />
           <Text style={styles.emptyText}>
-            No skills yet
+            暂无技能
           </Text>
         </View>
       ) : (
@@ -139,11 +139,11 @@ export default function SkillsScreen() {
               <Text style={styles.skillDesc}>{item.description}</Text>
               <View style={styles.skillMeta}>
                 <Text style={styles.metaText}>
-                  Used {item.useCount}× · {item.sourceSessionIds.length} sessions
+                  已使用 {item.useCount} 次 · 关联 {item.sourceSessionIds.length} 个会话
                 </Text>
                 {item.mergedFrom.length > 0 && (
                   <Text style={styles.mergedText}>
-                    Merged from {item.mergedFrom.length} skills
+                    由 {item.mergedFrom.length} 个技能合并
                   </Text>
                 )}
               </View>

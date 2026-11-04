@@ -37,7 +37,7 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     getModelConfig().then(config => { setModel(config); setContextLimit(String(config.contextLimit)); })
-      .catch(() => setFeedback("Could not load model configuration."));
+      .catch(() => setFeedback("无法加载模型配置。"));
     getApiKey().then((key) => {
       if (key) {
         setApiKey(key);
@@ -54,15 +54,15 @@ export default function SettingsScreen() {
 
   const handleSave = useCallback(async () => {
     if (!apiKey.trim()) {
-      setFeedback("Please enter an API key.");
+      setFeedback("请输入 API 密钥。");
       return;
     }
     try {
       await saveApiKey(apiKey.trim());
       setHasKey(true);
       setStatus("unknown");
-      setFeedback("Model API key saved on-device.");
-    } catch { setFeedback("Could not save the model API key."); }
+      setFeedback("模型 API 密钥已保存在本机。");
+    } catch { setFeedback("无法保存模型 API 密钥。"); }
   }, [apiKey]);
 
   const handleTest = useCallback(async () => {
@@ -70,12 +70,12 @@ export default function SettingsScreen() {
     setTesting(true);
     setStatus("unknown");
     try {
-      const ok = await testConnection(apiKey.trim());
-      setStatus(ok ? "valid" : "invalid");
-      setFeedback(ok ? "Model connection successful." : "Could not connect. Check your key and network.");
-    } catch {
+      const result = await testConnection(apiKey.trim());
+      setStatus(result.ok ? "valid" : "invalid");
+      setFeedback(result.ok ? "模型连接成功。" : `连接失败：${result.detail ?? "未知原因"}`);
+    } catch (error: any) {
       setStatus("invalid");
-      setFeedback("Model connection test failed.");
+      setFeedback(`模型连接测试失败：${error?.message ?? "未知原因"}`);
     } finally {
       setTesting(false);
     }
@@ -85,32 +85,32 @@ export default function SettingsScreen() {
     try {
       await deleteApiKey();
       setApiKey(""); setHasKey(false); setStatus("unknown");
-      setFeedback("Model API key removed from device.");
-    } catch { setFeedback("Could not remove the model API key."); }
+      setFeedback("模型 API 密钥已从本机移除。");
+    } catch { setFeedback("无法移除模型 API 密钥。"); }
   }, []);
 
   const handleSfSave = useCallback(async () => {
     if (!sfKey.trim()) {
-      setFeedback("Please enter a SiliconFlow API key.");
+      setFeedback("请输入 SiliconFlow API 密钥。");
       return;
     }
     try {
       await saveSiliconFlowKey(sfKey.trim());
       setSfHasKey(true); setSfStatus("unknown");
-      setFeedback("SiliconFlow API key saved on-device.");
-    } catch { setFeedback("Could not save the SiliconFlow API key."); }
+      setFeedback("SiliconFlow API 密钥已保存在本机。");
+    } catch { setFeedback("无法保存 SiliconFlow API 密钥。"); }
   }, [sfKey]);
 
   const handleSfTest = useCallback(async () => {
     setSfTesting(true);
     setSfStatus("unknown");
     try {
-      const ok = await testSiliconFlowConnection(sfKey.trim());
-      setSfStatus(ok ? "valid" : "invalid");
-      setFeedback(ok ? "SiliconFlow connection successful." : "Could not connect. Check your key and network.");
-    } catch {
+      const result = await testSiliconFlowConnection(sfKey.trim());
+      setSfStatus(result.ok ? "valid" : "invalid");
+      setFeedback(result.ok ? "SiliconFlow 连接成功。" : `SiliconFlow 连接失败：${result.detail ?? "未知原因"}`);
+    } catch (error: any) {
       setSfStatus("invalid");
-      setFeedback("SiliconFlow connection test failed.");
+      setFeedback(`SiliconFlow 连接测试失败：${error?.message ?? "未知原因"}`);
     } finally {
       setSfTesting(false);
     }
@@ -120,25 +120,25 @@ export default function SettingsScreen() {
     try {
       await deleteSiliconFlowKey();
       setSfKey(""); setSfHasKey(false); setSfStatus("unknown");
-      setFeedback("SiliconFlow API key removed from device.");
-    } catch { setFeedback("Could not remove the SiliconFlow API key."); }
+      setFeedback("SiliconFlow API 密钥已从本机移除。");
+    } catch { setFeedback("无法移除 SiliconFlow API 密钥。"); }
   }, []);
 
   return (
     <PageEntrance style={uiStyles.page}>
-      <ScreenHeader title="Settings" back />
+      <ScreenHeader title="设置" back />
       {!!feedback && <Text accessibilityRole="alert" style={styles.feedback}>{feedback}</Text>}
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.sectionTitle}>Model</Text>
+      <Text style={styles.sectionTitle}>模型</Text>
       {model && <>
-        <Text style={styles.aboutText}>HTTPS endpoint</Text>
-        <TextInput accessibilityLabel="HTTPS endpoint" style={styles.input} value={model.endpoint} autoCapitalize="none" autoCorrect={false} keyboardType="url"
+        <Text style={styles.aboutText}>HTTPS 接口地址</Text>
+        <TextInput accessibilityLabel="HTTPS 接口地址" style={styles.input} value={model.endpoint} autoCapitalize="none" autoCorrect={false} keyboardType="url"
           onChangeText={endpoint => { setModel({ ...model, endpoint }); setModelDirty(true); }} />
-        <Text style={styles.aboutText}>Model name</Text>
-        <TextInput accessibilityLabel="Model name" style={styles.input} value={model.model} autoCapitalize="none" autoCorrect={false}
+        <Text style={styles.aboutText}>模型名称</Text>
+        <TextInput accessibilityLabel="模型名称" style={styles.input} value={model.model} autoCapitalize="none" autoCorrect={false}
           onChangeText={name => { setModel({ ...model, model: name }); setModelDirty(true); }} />
-        <Text style={styles.aboutText}>Context limit (tokens)</Text>
-        <TextInput accessibilityLabel="Context limit in tokens" style={styles.input} value={contextLimit} keyboardType="number-pad"
+        <Text style={styles.aboutText}>上下文长度（tokens）</Text>
+        <TextInput accessibilityLabel="上下文长度（tokens）" style={styles.input} value={contextLimit} keyboardType="number-pad"
           onChangeText={value => { setContextLimit(value); setModelDirty(true); }} />
         <View style={[uiStyles.segmented, { marginTop: 12, marginBottom: 12 }]}>
           {(["anthropic", "openai"] as const).map(format => <TouchableOpacity key={format}
@@ -148,28 +148,28 @@ export default function SettingsScreen() {
             <Text style={[uiStyles.segmentText, model.format === format && { color: colors.accent }]}>{format === "openai" ? "OpenAI" : "Anthropic"}</Text>
           </TouchableOpacity>)}
         </View>
-        {modelDirty && <Text style={styles.aboutText}>Unsaved model configuration</Text>}
-        <View style={styles.buttonRow}><IconButton icon={Save} label="Save model configuration" onPress={async () => {
+        {modelDirty && <Text style={styles.aboutText}>模型配置尚未保存</Text>}
+        <View style={styles.buttonRow}><IconButton icon={Save} label="保存模型配置" onPress={async () => {
           try {
-            if (!/^\d+$/.test(contextLimit)) throw new Error("Context limit must be an integer");
+            if (!/^\d+$/.test(contextLimit)) throw new Error("上下文长度必须是整数");
             const config = { ...model, contextLimit: Number(contextLimit) };
             await saveModelConfig(config);
             setModel(config); setModelDirty(false); setStatus("unknown");
-            setFeedback("Model configuration saved.");
-          } catch (error: any) { setFeedback(`Invalid model: ${error.message}`); }
+            setFeedback("模型配置已保存。");
+          } catch (error: any) { setFeedback(`模型配置无效：${error.message}`); }
         }} /></View>
       </>}
 
-      <Text style={styles.sectionTitle}>API Key</Text>
+      <Text style={styles.sectionTitle}>API 密钥</Text>
       <Text style={styles.sectionDesc}>
-        Connect your DeepSeek or Qwen API key. Your key stays on-device and is
-        sent with requests only to the configured model endpoint.
+        填入你的 DeepSeek 或 Qwen API 密钥。密钥只保存在本机，
+        仅在请求时发送到你配置的模型接口。
       </Text>
 
       <View style={styles.inputRow}>
         <TextInput
           style={styles.input}
-          accessibilityLabel="Model API key"
+          accessibilityLabel="模型 API 密钥"
           placeholder="sk-..."
           placeholderTextColor={colors.muted}
           value={apiKey}
@@ -178,7 +178,7 @@ export default function SettingsScreen() {
           autoCapitalize="none"
           autoCorrect={false}
         />
-        <IconButton icon={showKey ? EyeOff : Eye} label={showKey ? "Hide model API key" : "Show model API key"} onPress={() => setShowKey(value => !value)} />
+        <IconButton icon={showKey ? EyeOff : Eye} label={showKey ? "隐藏模型 API 密钥" : "显示模型 API 密钥"} onPress={() => setShowKey(value => !value)} />
       </View>
 
       {status !== "unknown" && (
@@ -194,13 +194,13 @@ export default function SettingsScreen() {
               status === "valid" ? styles.statusTextValid : styles.statusTextInvalid,
             ]}
           >
-            {status === "valid" ? "Connection OK" : "Connection Failed"}
+            {status === "valid" ? "连接正常" : "连接失败"}
           </Text>
         </View>
       )}
 
       <View style={styles.buttonRow}>
-        <IconButton icon={Save} label="Save model API key" onPress={handleSave} />
+        <IconButton icon={Save} label="保存模型 API 密钥" onPress={handleSave} />
 
         <TouchableOpacity
           style={[styles.testButton, testing && styles.testButtonDisabled]}
@@ -211,22 +211,22 @@ export default function SettingsScreen() {
           {testing ? (
             <ActivityIndicator size="small" color={colors.accent} />
           ) : (
-            <><PlugZap size={18} color={colors.accent} /><Text style={styles.testButtonText}>Test Connection</Text></>
+            <><PlugZap size={18} color={colors.accent} /><Text style={styles.testButtonText}>测试连接</Text></>
           )}
         </TouchableOpacity>
-        {hasKey && <IconButton icon={Trash2} label="Remove model API key" onPress={handleDelete} />}
+        {hasKey && <IconButton icon={Trash2} label="移除模型 API 密钥" onPress={handleDelete} />}
       </View>
 
-      <Text style={[styles.sectionTitle, { marginTop: 16 }]}>SiliconFlow API Key</Text>
+      <Text style={[styles.sectionTitle, { marginTop: 16 }]}>SiliconFlow API 密钥</Text>
       <Text style={styles.sectionDesc}>
-        Audio transcription uploads recordings to SiliconFlow. Knowledge-base
-        embeddings also send text to SiliconFlow. Diary uploads require separate consent.
+        音频转写会将录音上传到 SiliconFlow，知识库向量化也会把文本发送给
+        SiliconFlow。日记上传需要单独授权。
       </Text>
 
       <View style={styles.inputRow}>
         <TextInput
           style={styles.input}
-          accessibilityLabel="SiliconFlow API key"
+          accessibilityLabel="SiliconFlow API 密钥"
           placeholder="sk-..."
           placeholderTextColor={colors.muted}
           value={sfKey}
@@ -235,7 +235,7 @@ export default function SettingsScreen() {
           autoCapitalize="none"
           autoCorrect={false}
         />
-        <IconButton icon={sfShowKey ? EyeOff : Eye} label={sfShowKey ? "Hide SiliconFlow API key" : "Show SiliconFlow API key"} onPress={() => setSfShowKey(value => !value)} />
+        <IconButton icon={sfShowKey ? EyeOff : Eye} label={sfShowKey ? "隐藏 SiliconFlow API 密钥" : "显示 SiliconFlow API 密钥"} onPress={() => setSfShowKey(value => !value)} />
       </View>
 
       {sfStatus !== "unknown" && (
@@ -251,13 +251,13 @@ export default function SettingsScreen() {
               sfStatus === "valid" ? styles.statusTextValid : styles.statusTextInvalid,
             ]}
           >
-            {sfStatus === "valid" ? "Connection OK" : "Connection Failed"}
+            {sfStatus === "valid" ? "连接正常" : "连接失败"}
           </Text>
         </View>
       )}
 
       <View style={styles.buttonRow}>
-        <IconButton icon={Save} label="Save SiliconFlow API key" onPress={handleSfSave} />
+        <IconButton icon={Save} label="保存 SiliconFlow API 密钥" onPress={handleSfSave} />
 
         <TouchableOpacity
           style={[styles.testButton, sfTesting && styles.testButtonDisabled]}
@@ -268,23 +268,23 @@ export default function SettingsScreen() {
           {sfTesting ? (
             <ActivityIndicator size="small" color={colors.accent} />
           ) : (
-            <><PlugZap size={18} color={colors.accent} /><Text style={styles.testButtonText}>Test Connection</Text></>
+            <><PlugZap size={18} color={colors.accent} /><Text style={styles.testButtonText}>测试连接</Text></>
           )}
         </TouchableOpacity>
-        {sfHasKey && <IconButton icon={Trash2} label="Remove SiliconFlow API key" onPress={handleSfDelete} />}
+        {sfHasKey && <IconButton icon={Trash2} label="移除 SiliconFlow API 密钥" onPress={handleSfDelete} />}
       </View>
 
-      <Text style={styles.sectionTitle}>Data</Text>
+      <Text style={styles.sectionTitle}>数据</Text>
       <Text style={styles.aboutText}>
-        Audio recordings are stored locally and should be deleted periodically.
+        录音文件保存在本机，建议定期清理。
         {"\n"}
-        Structured summaries and knowledge base are kept permanently.
+        结构化总结和知识库会长期保留。
       </Text>
 
-      <Text style={[styles.sectionTitle, { marginTop: 24 }]}>About</Text>
+      <Text style={[styles.sectionTitle, { marginTop: 24 }]}>关于</Text>
       <Text style={styles.aboutText}>
         Recorder v1.0.0{"\n"}
-        Local-first meeting & classroom intelligence
+        本地优先的会议与课堂智能助手
       </Text>
     </ScrollView>
     </PageEntrance>

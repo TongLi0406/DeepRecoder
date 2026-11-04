@@ -36,7 +36,8 @@
       "expo-sqlite",
       "expo-sharing",
       "expo-audio",
-      "expo-font"
+      "expo-font",
+      "./plugins/withCoreLibraryDesugaring"
     ],
     "extra": {
       "eas": {

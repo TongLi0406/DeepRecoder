@@ -30,11 +30,11 @@ export async function extractCourseName(
     const clean = raw.trim().replace(/```json\s*|```/g, "");
     const parsed = JSON.parse(clean);
     return {
-      courseName: parsed.courseName ?? courseName ?? "Unknown Course",
+      courseName: parsed.courseName ?? courseName ?? "未知课程",
       confidence: parsed.confidence ?? 0.5,
     };
   } catch {
-    return { courseName: courseName ?? "Unknown Course", confidence: 0.5 };
+    return { courseName: courseName ?? "未知课程", confidence: 0.5 };
   }
 }
 
@@ -96,7 +96,7 @@ export async function getCourseGroups(
   const map = new Map<string, CourseGroup>();
 
   for (const s of sessions) {
-    const name = s.courseName ?? "Unclassified";
+    const name = s.courseName ?? "未分类";
     if (!map.has(name)) {
       map.set(name, {
         courseName: name,

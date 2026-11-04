@@ -2,6 +2,8 @@ import { Buffer } from "buffer";
 
 export const DEFAULT_CONTEXT_LIMIT = 32768;
 export const TEXT_BUDGET = 6000;
+// 每日日记的中间笔记上限：比普通文本预算宽一些，避免为压到 6000 字节反复归并
+export const DIARY_NOTES_BUDGET = 12000;
 
 export function textBytes(text: string): number {
   return Buffer.byteLength(text, "utf8");

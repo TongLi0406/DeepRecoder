@@ -26,23 +26,23 @@ type Route = RouteProp<RootStackParamList, "Summary">;
 function StudentSummaryView({ summary }: { summary: StudentSummary }) {
   return (
     <>
-      <Text style={styles.section}>Knowledge Points</Text>
+      <Text style={styles.section}>知识点</Text>
       {summary.knowledgePoints.length === 0 && (
-        <Text style={styles.emptyText}>No knowledge points identified</Text>
+        <Text style={styles.emptyText}>未识别到知识点</Text>
       )}
       {summary.knowledgePoints.map((kp) => (
         <View key={kp.id} style={styles.card}>
           <Text style={styles.cardTitle}>{kp.name}</Text>
           <Text style={styles.cardDesc}>{kp.description}</Text>
           <Text style={styles.cardHint}>
-            Tip: {(kp as any).masteryHint ?? kp.category}
+            提示：{(kp as any).masteryHint ?? kp.category}
           </Text>
         </View>
       ))}
 
-      <Text style={styles.section}>Problem-Solving Approaches</Text>
+      <Text style={styles.section}>解题方法</Text>
       {summary.problemSolvingApproaches.length === 0 && (
-        <Text style={styles.emptyText}>No approaches identified</Text>
+        <Text style={styles.emptyText}>未识别到解题方法</Text>
       )}
       {summary.problemSolvingApproaches.map((pa) => (
         <View key={pa.id} style={styles.card}>
@@ -53,7 +53,7 @@ function StudentSummaryView({ summary }: { summary: StudentSummary }) {
 
       {summary.interLessonConnections.length > 0 && (
         <>
-          <Text style={styles.section}>Lesson Connections</Text>
+          <Text style={styles.section}>课时关联</Text>
           {summary.interLessonConnections.map((c) => (
             <View key={c.id} style={styles.card}>
               <Text style={styles.cardTitle}>{c.connection}</Text>
@@ -72,11 +72,11 @@ function TeacherSummaryView({ summary, transcript }: { summary: TeacherSummary; 
     <>
       <View style={styles.headerCard}>
         <Text style={styles.headerText}>
-          Style: {summary.teachingStyle} · Interaction: {summary.interactionLevel}
+          教学风格：{summary.teachingStyle} · 互动程度：{summary.interactionLevel}
         </Text>
       </View>
 
-      <Text style={styles.section}>Teaching Structure</Text>
+      <Text style={styles.section}>教学结构</Text>
       {summary.teachingStructure.map((s, i) => (
         <View key={i} style={styles.card}>
           <Text style={styles.cardTitle}>{s.section}</Text>
@@ -85,11 +85,11 @@ function TeacherSummaryView({ summary, transcript }: { summary: TeacherSummary; 
         </View>
       ))}
 
-      <Text style={styles.section}>Question Analysis</Text>
+      <Text style={styles.section}>提问分析</Text>
       {summary.questionTypes.map((q, i) => (
         <View key={i} style={styles.card}>
           <Text style={styles.cardTitle}>
-            {q.type} (x{q.count})
+            {q.type}（{q.count} 次）
           </Text>
           <Text style={styles.cardDesc}>{q.quality}</Text>
           {q.examples.map((e, j) => (
@@ -102,7 +102,7 @@ function TeacherSummaryView({ summary, transcript }: { summary: TeacherSummary; 
 
       <StudentSummaryView summary={summary} />
 
-      <Text style={styles.section}>Improvement Suggestions</Text>
+      <Text style={styles.section}>改进建议</Text>
       {summary.improvementSuggestions.map((s, i) => (
         <View key={i} style={styles.card}>
           <Text style={styles.cardDesc}>- {s}</Text>
@@ -115,9 +115,9 @@ function TeacherSummaryView({ summary, transcript }: { summary: TeacherSummary; 
 function MeetingSummaryView({ summary }: { summary: MeetingSummary }) {
   return (
     <>
-      <Text style={styles.section}>Decisions</Text>
+      <Text style={styles.section}>决策</Text>
       {summary.decisions.length === 0 && (
-        <Text style={styles.emptyText}>No decisions recorded</Text>
+        <Text style={styles.emptyText}>未记录决策</Text>
       )}
       {summary.decisions.map((d) => (
         <View key={d.id} style={styles.card}>
@@ -126,22 +126,22 @@ function MeetingSummaryView({ summary }: { summary: MeetingSummary }) {
         </View>
       ))}
 
-      <Text style={styles.section}>Action Items</Text>
+      <Text style={styles.section}>行动项</Text>
       {summary.actionItems.length === 0 && (
-        <Text style={styles.emptyText}>No action items recorded</Text>
+        <Text style={styles.emptyText}>未记录行动项</Text>
       )}
       {summary.actionItems.map((a) => (
         <View key={a.id} style={styles.card}>
           <Text style={styles.cardTitle}>
-            {a.content} {a.deadline ? `(by ${a.deadline})` : ""}
+            {a.content} {a.deadline ? `（截止 ${a.deadline}）` : ""}
           </Text>
-          <Text style={styles.cardDesc}>Assignee: {a.assignee}</Text>
+          <Text style={styles.cardDesc}>负责人：{a.assignee}</Text>
         </View>
       ))}
 
-      <Text style={styles.section}>Key Points</Text>
+      <Text style={styles.section}>关键要点</Text>
       {summary.keyPoints.length === 0 && (
-        <Text style={styles.emptyText}>No key points recorded</Text>
+        <Text style={styles.emptyText}>未记录要点</Text>
       )}
       {summary.keyPoints.map((kp, i) => (
         <View key={i} style={styles.card}>
@@ -204,7 +204,7 @@ export default function SummaryScreen() {
           }
         }
       } catch {
-        if (mounted) addDebug("Could not refresh processing status.");
+        if (mounted) addDebug("无法刷新处理状态。");
       }
     };
 
@@ -225,34 +225,34 @@ export default function SummaryScreen() {
     try {
       await exportDocument(format, session.title || "session", format === "pdf" ? sessionToHtml(session) : sessionToMarkdown(session));
       setExportOpen(false);
-    } catch (error: any) { setExportError(error.message ?? "Export failed."); }
+    } catch (error: any) { setExportError(error.message ?? "导出失败。"); }
     finally { setExporting(false); }
   };
 
   usePreventRemove(processing, ({ data }) => {
     const leave = () => navigation.dispatch(data.action);
     if (Platform.OS === "web") {
-      if (window.confirm("Processing is still running. Leave this page and continue in the background?")) leave();
+      if (window.confirm("处理仍在进行中，是否离开本页并在后台继续？")) leave();
       return;
     }
     const { running, sessionId } = getQueueState();
     const isThisSession = running && sessionId === initialSession.id;
 
     Alert.alert(
-      "Processing in progress",
+      "处理进行中",
       isThisSession
-        ? "Transcription or analysis is still running. You can leave — processing will continue in the background."
-        : "Processing is still running.",
+        ? "转写或分析仍在进行。你可以离开，处理会在后台继续。"
+        : "处理仍在进行中。",
       [
-        { text: "Wait", style: "cancel" },
+        { text: "继续等待", style: "cancel" },
         {
-          text: isThisSession ? "Leave (background)" : "Leave",
+          text: isThisSession ? "离开（后台继续）" : "离开",
           style: isThisSession ? "default" : "destructive",
           onPress: leave,
         },
         ...(isThisSession
           ? [{
-              text: "Abort & Leave",
+              text: "中止并离开",
               style: "destructive" as const,
               onPress: () => {
                 abortProcessing().finally(leave);
@@ -279,24 +279,24 @@ export default function SummaryScreen() {
 
   return (
     <PageEntrance style={uiStyles.page}>
-      <ScreenHeader title="Summary" back onBack={handleDone} />
+      <ScreenHeader title="总结" back onBack={handleDone} />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>{displayTitle}</Text>
 
         {session.createdAt && session.endTime && (
           <Text style={styles.timeRange}>
-            {new Date(session.createdAt).toLocaleString()} —{" "}
-            {new Date(session.endTime).toLocaleTimeString()}
+            {new Date(session.createdAt).toLocaleString("zh-CN")} —{" "}
+            {new Date(session.endTime).toLocaleTimeString("zh-CN")}
           </Text>
         )}
 
         {processing && (
           <View style={styles.processing}>
-            <Text style={styles.processingTitle}>Processing Recording</Text>
+            <Text style={styles.processingTitle}>正在处理录音</Text>
 
             {streamingText.length > 0 && (
               <View style={styles.streamingCard}>
-                <Text style={styles.streamingTitle}>AI is generating summary...</Text>
+                <Text style={styles.streamingTitle}>AI 正在生成总结…</Text>
                 <Text style={styles.streamingText} numberOfLines={20}>
                   {streamingText}
                 </Text>
@@ -324,12 +324,12 @@ export default function SummaryScreen() {
                     styles.stageTitle,
                     processingStage === "transcribing" && styles.stageTitleActive,
                   ]}>
-                    Speech to Text
+                    语音转文字
                   </Text>
                   <Text style={styles.stageHint}>
                     {processingStage === "transcribing"
-                      ? "Converting audio to text via Whisper..."
-                      : "Transcription complete"}
+                      ? "正在通过 Whisper 将音频转写为文字…"
+                      : "转写完成"}
                   </Text>
                 </View>
               </View>
@@ -360,14 +360,14 @@ export default function SummaryScreen() {
                     styles.stageTitle,
                     processingStage === "summarizing" && styles.stageTitleActive,
                   ]}>
-                    AI Summarization
+                    AI 总结
                   </Text>
                   <Text style={styles.stageHint}>
                     {processingStage === "transcribing"
-                      ? "Waiting for transcription..."
+                      ? "等待转写…"
                       : processingStage === "summarizing"
-                        ? "Analyzing with DeepSeek LLM..."
-                        : "Summary complete"}
+                        ? "正在使用 DeepSeek 模型分析…"
+                        : "总结完成"}
                   </Text>
                 </View>
               </View>
@@ -398,16 +398,16 @@ export default function SummaryScreen() {
                     styles.stageTitle,
                     processingStage === "indexing" && styles.stageTitleActive,
                   ]}>
-                    Vector Indexing
+                    向量索引
                   </Text>
                   <Text style={styles.stageHint}>
                     {processingStage === "transcribing" || processingStage === "summarizing"
-                      ? "Waiting for summary..."
+                      ? "等待总结…"
                       : processingStage === "indexing"
-                        ? "Generating embeddings for RAG knowledge base..."
+                        ? "正在为 RAG 知识库生成向量…"
                         : processingStage === "done" && session.embeddingMethod
-                          ? `Indexed with ${session.embeddingMethod}`
-                          : "Indexing complete"}
+                          ? `已使用 ${session.embeddingMethod} 完成索引`
+                          : "索引完成"}
                   </Text>
                 </View>
               </View>
@@ -438,14 +438,14 @@ export default function SummaryScreen() {
                     styles.stageTitle,
                     processingStage === "extracting" && styles.stageTitleActive,
                   ]}>
-                    Skill Extraction
+                    技能提取
                   </Text>
                   <Text style={styles.stageHint}>
                     {processingStage === "transcribing" || processingStage === "summarizing" || processingStage === "indexing"
-                      ? "Waiting for indexing..."
+                      ? "等待索引…"
                       : processingStage === "extracting"
-                        ? "Extracting reusable skills from transcript..."
-                        : "Skills extracted"}
+                        ? "正在从转写内容中提取可复用技能…"
+                        : "技能提取完成"}
                   </Text>
                 </View>
               </View>
@@ -455,34 +455,33 @@ export default function SummaryScreen() {
 
         {isFailed && (
           <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Processing Error</Text>
-            <Text style={styles.errorText}>{session.error || "Unknown error"}</Text>
+            <Text style={styles.errorTitle}>处理出错</Text>
+            <Text style={styles.errorText}>{session.error || "未知错误"}</Text>
             <TouchableOpacity
               style={styles.retryButton}
               accessibilityRole="button"
-              accessibilityLabel="Retry Processing"
+              accessibilityLabel="重试处理"
               onPress={async () => {
                 try {
                   await updateSessionPhase(session.id, "queued");
                   setSession(s => ({ ...s, phase: "queued", error: undefined }));
                 } catch {
-                  setSession(s => ({ ...s, error: "Could not retry recording." }));
+                  setSession(s => ({ ...s, error: "无法重试录音。" }));
                 }
               }}
             >
               <RotateCcw size={18} color={colors.surface} />
-              <Text style={styles.retryButtonText}>Retry Processing</Text>
+              <Text style={styles.retryButtonText}>重试处理</Text>
             </TouchableOpacity>
           </View>
         )}
 
         {!processing && !isFailed && !session.transcript && (
           <View style={styles.warningCard}>
-            <Text style={styles.warningTitle}>No transcript captured</Text>
+            <Text style={styles.warningTitle}>未获取到转写内容</Text>
             <Text style={styles.warningText}>
-              Whisper transcription may have failed. Check that the audio file
-              exists and try again. The recording was saved but no text was
-              extracted.
+              语音转写可能失败了。请确认录音文件存在后重试。录音已保存，
+              但未能提取文字。
             </Text>
           </View>
         )}
@@ -498,9 +497,9 @@ export default function SummaryScreen() {
         )}
         {displayTranscript && (
           <View style={styles.details}>
-            <TouchableOpacity style={styles.detailsToggle} accessibilityRole="button" accessibilityLabel="Transcript"
+            <TouchableOpacity style={styles.detailsToggle} accessibilityRole="button" accessibilityLabel="转写文本"
               accessibilityState={{ expanded: transcriptExpanded }} onPress={() => setTranscriptExpanded(value => !value)}>
-              <Text style={styles.detailsTitle}>{speakerLabeled ? "Speaker-Labeled Transcript" : "Transcript"}</Text>
+              <Text style={styles.detailsTitle}>{speakerLabeled ? "带说话人标注的转写" : "转写文本"}</Text>
               {transcriptExpanded ? <ChevronDown size={18} color={colors.muted} /> : <ChevronRight size={18} color={colors.muted} />}
             </TouchableOpacity>
             {transcriptExpanded && <Text selectable style={styles.transcriptText}>{displayTranscript}</Text>}
@@ -510,7 +509,7 @@ export default function SummaryScreen() {
           <View style={styles.details}>
             <TouchableOpacity style={styles.detailsToggle} accessibilityRole="button" accessibilityState={{ expanded: debugExpanded }}
               onPress={() => setDebugExpanded(value => !value)}>
-              <Text style={styles.detailsTitle}>Processing log</Text>
+              <Text style={styles.detailsTitle}>处理日志</Text>
               {debugExpanded ? <ChevronDown size={18} color={colors.muted} /> : <ChevronRight size={18} color={colors.muted} />}
             </TouchableOpacity>
             {debugExpanded && debugInfo.map((line, index) => <Text key={index} style={styles.debugText}>{line}</Text>)}
@@ -526,14 +525,14 @@ export default function SummaryScreen() {
         </TouchableOpacity>)}
       </View>}
       <View style={styles.actions}>
-        <IconButton icon={Download} label="Export recording" disabled={exporting} onPress={() => setExportOpen(value => !value)} />
+        <IconButton icon={Download} label="导出录音" disabled={exporting} onPress={() => setExportOpen(value => !value)} />
         <TouchableOpacity
           style={styles.doneButton}
           accessibilityRole="button"
           onPress={handleDone}
         >
           <Check size={18} color={colors.surface} />
-          <Text style={styles.doneButtonText}>Done</Text>
+          <Text style={styles.doneButtonText}>完成</Text>
         </TouchableOpacity>
       </View>
     </PageEntrance>

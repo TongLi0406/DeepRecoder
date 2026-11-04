@@ -4,7 +4,8 @@ export type DiarySpeakerAuto = "matched" | "unknown";
 
 export type DiaryManualIdentity = "none" | "confirmed_self" | "confirmed_other";
 
-export type DiaryRetentionDays = 1 | 7 | 30;
+// 0 表示永久保留，不做自动清理
+export type DiaryRetentionDays = 0 | 1 | 3 | 7 | 30;
 
 export interface DiaryNativeSegment {
   id: string;

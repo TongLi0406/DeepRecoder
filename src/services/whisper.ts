@@ -163,7 +163,7 @@ export async function initWhisper(): Promise<{ ok: boolean; error?: string }> {
     return { ok: whisperContext !== null };
   } catch (e: any) {
     whisperInitError = e?.message ?? String(e);
-    return { ok: false, error: whisperInitError ?? "Whisper init failed" };
+    return { ok: false, error: whisperInitError ?? "Whisper 初始化失败" };
   }
 }
 

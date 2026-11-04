@@ -1,5 +1,5 @@
 import { Platform } from "react-native";
-import { textBytes } from "./llmContext";
+import { textBytes, DIARY_NOTES_BUDGET } from "./llmContext";
 import type {
   DailyDiary,
   DailyDiaryContent,
@@ -22,7 +22,7 @@ const DEFAULT_CONTENT: DailyDiaryContent = {
   topics: [],
   commitments: [],
   unresolved: [],
-  caveat: "Sources are references, not proof.",
+  caveat: "来源仅供参考，不构成证据。",
 };
 
 function normalizeDailyContent(content: any): DailyDiaryContent {
@@ -49,14 +49,14 @@ function normalizeDailyContent(content: any): DailyDiaryContent {
       item: typeof item?.item === "string" ? item.item : "",
       sourceSegmentIds: asArray(item?.sourceSegmentIds).filter((x: any) => typeof x === "string"),
     })),
-    caveat: "Sources are references, not proof.",
+    caveat: "来源仅供参考，不构成证据。",
   };
 }
 
 const memory = {
   settings: new Map<string, string>([
     ["consent_granted", "false"],
-    ["retention_days", "7"],
+    ["retention_days", "3"],
   ]),
   segments: new Map<string, DiarySegment>(),
   daily: new Map<string, DailyDiary>(),
@@ -86,8 +86,8 @@ function safeJsonParse<T>(text: string | null | undefined, fallback: T): T {
 }
 
 function ensureRetentionDays(days: number): DiaryRetentionDays {
-  if (days === 1 || days === 7 || days === 30) return days;
-  throw new Error("Retention days must be one of 1/7/30");
+  if (days === 0 || days === 1 || days === 3 || days === 7 || days === 30) return days;
+  throw new Error("Retention days must be one of 0/1/3/7/30");
 }
 
 async function getNativeDb(): Promise<any> {
@@ -142,7 +142,24 @@ async function getNativeDb(): Promise<any> {
       try { await db.execAsync("ALTER TABLE diary_segments ADD COLUMN audio_deleted INTEGER NOT NULL DEFAULT 0"); } catch {}
 
       await db.runAsync("INSERT OR IGNORE INTO diary_settings (key, value) VALUES ('consent_granted', 'false')");
-      await db.runAsync("INSERT OR IGNORE INTO diary_settings (key, value) VALUES ('retention_days', '7')");
+      await db.runAsync("INSERT OR IGNORE INTO diary_settings (key, value) VALUES ('retention_days', '3')");
+
+      // 升级迁移：默认改为“已转写音频保留 3 天”（仅迁移一次）
+      const migrated = await db.getAllAsync("SELECT value FROM diary_settings WHERE key = 'retention_default_v3'");
+      if (!migrated.length) {
+        await db.runAsync("INSERT OR REPLACE INTO diary_settings (key, value) VALUES ('retention_days', '3')");
+        await db.runAsync("INSERT OR REPLACE INTO diary_settings (key, value) VALUES ('retention_default_v3', '1')");
+      }
+
+      // 日记改为中文优先后，已有日记标记为待重新生成（仅迁移一次）
+      const languageMigrated = await db.getAllAsync("SELECT value FROM diary_settings WHERE key = 'daily_language_zh_v1'");
+      if (!languageMigrated.length) {
+        await db.runAsync(
+          "UPDATE daily_diaries SET state = 'dirty', version = version + 1, last_error = 'language-zh', updated_at = ?",
+          nowIso(),
+        );
+        await db.runAsync("INSERT OR REPLACE INTO diary_settings (key, value) VALUES ('daily_language_zh_v1', '1')");
+      }
 
       return db;
     })().catch(error => {
@@ -226,7 +243,7 @@ export async function getDiarySettings(): Promise<DiarySettings> {
   if (Platform.OS === "web") {
     return {
       consentGranted: memory.settings.get("consent_granted") === "true",
-      retentionDays: ensureRetentionDays(Number(memory.settings.get("retention_days") ?? 7)),
+      retentionDays: ensureRetentionDays(Number(memory.settings.get("retention_days") ?? 3)),
     };
   }
   const db = await getNativeDb();
@@ -235,7 +252,7 @@ export async function getDiarySettings(): Promise<DiarySettings> {
   for (const row of rows) map.set(row.key, row.value);
   return {
     consentGranted: map.get("consent_granted") === "true",
-    retentionDays: ensureRetentionDays(Number(map.get("retention_days") ?? "7")),
+    retentionDays: ensureRetentionDays(Number(map.get("retention_days") ?? "3")),
   };
 }
 
@@ -601,8 +618,8 @@ export async function saveDailyDiary(
   payload: { notes: string; sourceSegmentIds: string[]; content: DailyDiaryContent },
   expectedVersion?: number,
 ): Promise<void> {
-  if (textBytes(payload.notes) > 6000) {
-    throw new Error("Daily notes exceed 6000-byte budget");
+  if (textBytes(payload.notes) > DIARY_NOTES_BUDGET) {
+    throw new Error("Daily notes exceed storage budget");
   }
   await validateSourceIds(localDate, payload.sourceSegmentIds);
   const sourceJson = JSON.stringify(Array.from(new Set(payload.sourceSegmentIds)));
@@ -790,6 +807,10 @@ export async function recoverDiaryStaleStates(): Promise<{ requeuedSegments: num
 
 export async function planRetentionCleanup(nowDateIso = nowIso()): Promise<DiaryRetentionPlan> {
   const settings = await getDiarySettings();
+  // 0 = 永久保留，不产生任何清理计划
+  if (settings.retentionDays === 0) {
+    return { cutoffLocalDate: "", deletableSegmentIds: [], blockedUnprocessedSegmentIds: [] };
+  }
   const cutoffDate = new Date(nowDateIso);
   cutoffDate.setDate(cutoffDate.getDate() - settings.retentionDays);
   const cutoffLocalDate = asLocalDate(cutoffDate.toISOString());
@@ -802,6 +823,7 @@ export async function planRetentionCleanup(nowDateIso = nowIso()): Promise<Diary
 
   const include = (segment: DiarySegment): void => {
     if (segment.localDate >= cutoffLocalDate) return;
+    if (segment.audioDeleted) return;
     if (segment.state === "done") {
       plan.deletableSegmentIds.push(segment.id);
       return;

@@ -14,8 +14,10 @@ yarn-error.*
 .DS_Store
 *.pem
 *.tsbuildinfo
-ios/
-android/
-test-data/
+/ios/
+/android/
+/test-data/
+/modules/pcm-recorder/android/build/
+*.7z
 *.mp4
 .git/

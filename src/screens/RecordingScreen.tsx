@@ -33,10 +33,10 @@ function formatTime(seconds: number): string {
 }
 
 const MODE_LABELS: Record<SessionMode, string> = {
-  "meeting-organizer": "Meeting · Organizer",
-  "meeting-attendee": "Meeting · Attendee",
-  "classroom-student": "Classroom · Student",
-  "classroom-teacher": "Classroom · Teacher",
+  "meeting-organizer": "会议 · 主持人",
+  "meeting-attendee": "会议 · 参会者",
+  "classroom-student": "课堂 · 学生",
+  "classroom-teacher": "课堂 · 教师",
 };
 
 export default function RecordingScreen() {
@@ -105,7 +105,7 @@ export default function RecordingScreen() {
     const unsubscribe = navigation.addListener("beforeRemove", (e) => {
       if (!ownsRecordingRef.current && !startingRef.current) return;
       e.preventDefault();
-      setError("Stop recording before leaving.");
+      setError("请先停止录音再离开。");
     });
     return unsubscribe;
   }, [navigation]);
@@ -133,7 +133,7 @@ export default function RecordingScreen() {
       setPaused(false);
       setElapsed(0);
     } catch (err: any) {
-      if (mountedRef.current) setError(err.message ?? "Could not start recording");
+      if (mountedRef.current) setError(err.message ?? "无法开始录音");
     } finally {
       startingRef.current = false;
       if (mountedRef.current) setStarting(false);
@@ -159,7 +159,7 @@ export default function RecordingScreen() {
         setPaused(true);
       }
     } catch {
-      setError("Could not pause/resume recording");
+      setError("暂停/继续录音失败");
     }
   }, []);
 
@@ -188,7 +188,7 @@ export default function RecordingScreen() {
       navigation.replace("Summary", { session });
     } catch (err: any) {
       setStopping(false);
-      setError(err.message ?? "Could not stop recording");
+      setError(err.message ?? "无法停止录音");
     }
   }, [mode, navigation, stopping]);
 
@@ -196,20 +196,20 @@ export default function RecordingScreen() {
   if (!recording) {
     return (
       <View style={styles.container}>
-        <ScreenHeader title="Recorder" caption={MODE_LABELS[mode]} back />
+        <ScreenHeader title="录音" caption={MODE_LABELS[mode]} back />
         <View style={styles.center}>
           <TouchableOpacity
             style={styles.startButton}
             onPress={handleStart}
-            accessibilityRole="button" accessibilityLabel="Start Recording"
+            accessibilityRole="button" accessibilityLabel="开始录音"
             disabled={stopping || starting}
           >
             <Mic size={30} color={colors.surface} />
           </TouchableOpacity>
-          <Text style={styles.hint}>{starting ? "Starting..." : "Ready to record"}</Text>
+          <Text style={styles.hint}>{starting ? "正在启动…" : "准备就绪"}</Text>
           {error && <Text style={styles.errorText}>{error}</Text>}
         </View>
-        <View style={styles.cancelButton}><IconButton icon={X} label="Cancel Recording" disabled={starting} onPress={() => navigation.goBack()} /></View>
+        <View style={styles.cancelButton}><IconButton icon={X} label="取消录音" disabled={starting} onPress={() => navigation.goBack()} /></View>
       </View>
     );
   }
@@ -218,14 +218,14 @@ export default function RecordingScreen() {
   return (
     <View style={styles.container}>
       <View style={{ paddingTop: 32, paddingHorizontal: 24 }}>
-        <Text style={{ fontFamily: fonts.strong, fontSize: 26, color: colors.text }}>{paused ? "Paused" : "Recording"}</Text>
+        <Text style={{ fontFamily: fonts.strong, fontSize: 26, color: colors.text }}>{paused ? "已暂停" : "录音中"}</Text>
         <Text style={styles.modeLabel}>{MODE_LABELS[mode]}</Text>
       </View>
 
       {simulated && (
         <View style={styles.simBanner}>
           <Text style={styles.simBannerText}>
-            Simulation mode (mic unavailable)
+            模拟模式（麦克风不可用）
           </Text>
         </View>
       )}
@@ -233,7 +233,7 @@ export default function RecordingScreen() {
       {!simulated && sttInfo.status === "whisper_pending" && (
         <View style={styles.sttBannerActive}>
           <Text style={styles.sttBannerTextActive}>
-            Whisper will transcribe after recording stops
+            录音结束后将由 Whisper 转写
           </Text>
         </View>
       )}
@@ -241,7 +241,7 @@ export default function RecordingScreen() {
       {!simulated && sttInfo.status === "active" && (
         <View style={styles.sttBannerActive}>
           <Text style={styles.sttBannerTextActive}>
-            Speech recognition active
+            语音识别进行中
           </Text>
         </View>
       )}
@@ -252,19 +252,19 @@ export default function RecordingScreen() {
           <Mic size={40} strokeWidth={1.4} color={paused ? colors.muted : colors.red} />
         </View>
         <Text style={styles.timer}>{formatTime(elapsed)}</Text>
-        <Text style={styles.hint}>{stopping ? "Saving..." : simulated ? "Simulated capture" : paused ? "Capture paused" : "Microphone active"}</Text>
+        <Text style={styles.hint}>{stopping ? "正在保存…" : simulated ? "模拟录制" : paused ? "录制已暂停" : "麦克风工作中"}</Text>
 
         {error && <Text style={styles.errorText}>{error}</Text>}
 
         <View style={styles.controls}>
-          <IconButton icon={paused ? Play : Pause} label={paused ? "Resume Recording" : "Pause Recording"} onPress={handlePause} disabled={stopping} />
+          <IconButton icon={paused ? Play : Pause} label={paused ? "继续录音" : "暂停录音"} onPress={handlePause} disabled={stopping} />
 
           <TouchableOpacity
             style={[styles.stopButton, stopping && styles.stopButtonDisabled]}
             onPress={handleStop}
             disabled={stopping}
-            accessibilityRole="button" accessibilityLabel="Stop and Save Recording"
-            {...(Platform.OS === "web" ? { title: "Stop and Save Recording" } : {})}
+            accessibilityRole="button" accessibilityLabel="停止并保存录音"
+            {...(Platform.OS === "web" ? { title: "停止并保存录音" } : {})}
           >
             <Square size={26} color={colors.surface} fill={colors.surface} />
           </TouchableOpacity>

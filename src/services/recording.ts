@@ -33,7 +33,7 @@ async function ensureRecordingPermission(): Promise<void> {
   if (current?.granted) return;
   const requested = await requestPermissions();
   if (!requested?.granted) {
-    throw new Error("Microphone permission denied");
+    throw new Error("麦克风权限被拒绝");
   }
 }
 
@@ -140,7 +140,7 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
       } catch (e: any) {
         const msg = String(e?.message ?? "").toLowerCase();
         if (msg.includes("denied") || msg.includes("notallowed") || msg.includes("permission")) {
-          throw new Error("Microphone permission denied");
+          throw new Error("麦克风权限被拒绝");
         }
         const allowSimulation = typeof window !== "undefined" && !!(window as any).__RECORDER_ALLOW_WEB_SIMULATION__;
         if (!allowSimulation) {
@@ -174,7 +174,7 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
     if (!PcmRecorder.hasPermission()) {
       await ensureRecordingPermission();
       if (!PcmRecorder.hasPermission()) {
-        throw new Error("Microphone permission denied");
+        throw new Error("麦克风权限被拒绝");
       }
     }
     const status = await PcmRecorder.startRecording({ sampleRate: 16000, enableMetering: false });
@@ -197,7 +197,7 @@ export async function startRecording(): Promise<{ simulated: boolean }> {
 }
 
 export async function stopRecording(elapsedSeconds?: number): Promise<{ uri: string; durationMs: number; transcript: string; simulated: boolean }> {
-  if (!recorder) throw new Error("No active recording");
+  if (!recorder) throw new Error("当前没有进行中的录音");
 
   if (Platform.OS === "web" && recorder.simulated) {
     if (simulationTimer) { clearInterval(simulationTimer); simulationTimer = null; }
@@ -380,11 +380,24 @@ export async function deleteFile(uri: string): Promise<void> {
     return;
   }
   const fs = await import("expo-file-system");
-  const file = new fs.File(uri);
-  if (!file.exists) return;
+  // 原生返回的是绝对路径，expo-file-system 需要 file:// 形式
+  const normalized = uri.startsWith("file://") ? uri : `file://${uri}`;
+  let file: any;
+  try {
+    file = new fs.File(normalized);
+  } catch {
+    return;
+  }
+  let exists = false;
+  try {
+    exists = file.exists;
+  } catch {
+    return;
+  }
+  if (!exists) return;
   try {
     file.delete();
-  } catch (e: any) {
-    throw new Error(e?.message ?? "Failed to delete recording file");
+  } catch {
+    // 清理失败不应阻塞主流程
   }
 }

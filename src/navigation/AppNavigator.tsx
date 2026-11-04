@@ -42,22 +42,22 @@ export default function AppNavigator() {
       <Tab.Screen
         name="Home"
         component={HomeScreen}
-        options={{ tabBarLabel: "Record" }}
+        options={{ tabBarLabel: "录音" }}
       />
       <Tab.Screen
         name="Diary"
         component={DiaryScreen}
-        options={{ tabBarLabel: "Diary" }}
+        options={{ tabBarLabel: "日记" }}
       />
       <Tab.Screen
         name="Library"
         component={LibraryScreen}
-        options={{ tabBarLabel: "Library" }}
+        options={{ tabBarLabel: "资料库" }}
       />
       <Tab.Screen
         name="Search"
         component={SearchScreen}
-        options={{ tabBarLabel: "Ask" }}
+        options={{ tabBarLabel: "提问" }}
       />
     </Tab.Navigator>
   );

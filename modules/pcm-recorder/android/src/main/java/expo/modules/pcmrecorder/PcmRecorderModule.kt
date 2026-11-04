@@ -11,8 +11,19 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import okhttp3.Dns
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class PcmRecorderModule : Module() {
 
@@ -245,7 +256,11 @@ class PcmRecorderModule : Module() {
 
     AsyncFunction("getDiaryStatus") {
       val context = appContext.reactContext ?: throw CodedException("React context not available")
-      val manifest = DiaryManifestStore.load(context.filesDir)
+      var manifest = DiaryManifestStore.load(context.filesDir)
+      // 进程被杀/重装后 manifest 可能仍是 active，但服务已不存在，需要自愈
+      if (!DiaryForegroundService.serviceActive && manifest.active) {
+        manifest = DiaryManifestStore.recover(context.filesDir)
+      }
       val modelPaths = resolveDiaryModelPaths(context.filesDir)
       mapOf(
         "active" to (manifest.active || DiaryForegroundService.serviceActive),
@@ -283,8 +298,12 @@ class PcmRecorderModule : Module() {
       if (isRecordingFlag.get()) {
         throw CodedException("Ordinary PCM recording is active")
       }
-      if (DiaryForegroundService.serviceActive || DiaryManifestStore.load(context.filesDir).active) {
+      if (DiaryForegroundService.serviceActive) {
         return@AsyncFunction true
+      }
+      val manifest = DiaryManifestStore.load(context.filesDir)
+      if (manifest.active) {
+        DiaryManifestStore.recover(context.filesDir)
       }
       val modelPaths = resolveDiaryModelPaths(context.filesDir)
       if (!modelPaths.ready) {
@@ -314,7 +333,13 @@ class PcmRecorderModule : Module() {
 
     AsyncFunction("listDiarySegments") {
       val context = appContext.reactContext ?: throw CodedException("React context not available")
-      DiaryManifestStore.recover(context.filesDir).segments.map {
+      // 采集进行中不能调用 recover()，否则会清空 active/current 并提前写入 WAV 头
+      val segments = if (DiaryForegroundService.serviceActive) {
+        DiaryManifestStore.load(context.filesDir).segments
+      } else {
+        DiaryManifestStore.recover(context.filesDir).segments
+      }
+      segments.map {
         mapOf(
           "id" to it.id,
           "filePath" to it.filePath,
@@ -365,6 +390,51 @@ class PcmRecorderModule : Module() {
       val context = appContext.reactContext ?: throw CodedException("React context not available")
       SherpaSpeaker.deleteProfile(context)
       true
+    }
+
+    // ─── HTTP (IPv4 优先，规避不可达的 IPv6 地址导致请求挂死) ───
+    AsyncFunction("httpPostJson") { url: String, headers: Map<String, String>, body: String, timeoutMs: Int ->
+      val builder = Request.Builder()
+        .url(url)
+        .post(body.toRequestBody("application/json".toMediaType()))
+      headers.forEach { (key, value) -> builder.header(key, value) }
+      executeHttp(builder.build(), timeoutMs)
+    }
+
+    AsyncFunction("httpPostMultipart") { url: String, headers: Map<String, String>, fields: Map<String, String>, filePath: String, fileName: String, mimeType: String, timeoutMs: Int ->
+      val file = File(filePath.removePrefix("file://"))
+      if (!file.exists()) throw CodedException("audio_file_not_found")
+      val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
+      fields.forEach { (key, value) -> multipart.addFormDataPart(key, value) }
+      multipart.addFormDataPart("file", fileName, file.asRequestBody(mimeType.toMediaTypeOrNull()))
+      val builder = Request.Builder()
+        .url(url)
+        .post(multipart.build())
+      headers.forEach { (key, value) -> builder.header(key, value) }
+      executeHttp(builder.build(), timeoutMs)
+    }
+  }
+
+  private fun executeHttp(request: Request, timeoutMs: Int): Map<String, Any> {
+    val client = OkHttpClient.Builder()
+      .dns(ipv4FirstDns)
+      .connectTimeout(8, TimeUnit.SECONDS)
+      .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+      .writeTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+      .build()
+    client.newCall(request).execute().use { response ->
+      return mapOf(
+        "status" to response.code,
+        "body" to (response.body?.string() ?: ""),
+      )
+    }
+  }
+
+  private val ipv4FirstDns: Dns = object : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+      val addresses = Dns.SYSTEM.lookup(hostname)
+      val ipv4 = addresses.filterIsInstance<Inet4Address>()
+      return if (ipv4.isNotEmpty()) ipv4 else addresses
     }
   }
 

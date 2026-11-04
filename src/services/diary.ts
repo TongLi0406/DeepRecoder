@@ -1,7 +1,8 @@
 import { Platform } from "react-native";
 import { callLLM, getModelConfig } from "./api";
 import { compactTranscript } from "./summarization";
-import { compactText, textBytes, checkAbort } from "./llmContext";
+import { compactText, textBytes, checkAbort, DIARY_NOTES_BUDGET } from "./llmContext";
+import { debugLog } from "./debug";
 import { startRecording, stopRecording, cleanupRecording, isRecordingActive, deleteFile } from "./recording";
 import { transcribeRemote } from "./remoteStt";
 import {
@@ -65,7 +66,8 @@ type NativeModule = {
 const REDUCE_SYSTEM = `Compress diary segment notes while preserving source labels [[SRC:segment-id]].
 Keep only neutral facts, timeline markers, decisions, commitments and unresolved issues.
 Never invent identity or first-person ownership.
-Do not remove or rewrite source labels.`;
+Do not remove or rewrite source labels.
+Always write the compressed notes in Simplified Chinese. Translate non-Chinese content into Chinese; keep proper nouns (names, places, titles) in their original form.`;
 
 const DAILY_SYSTEM = `Generate a daily diary JSON from bounded notes.
 Rules:
@@ -75,6 +77,8 @@ Rules:
 4) If evidence is insufficient, use empty arrays.
 5) Every non-empty timeline/topic/commitment/unresolved item must include at least one sourceSegmentIds entry.
 6) Never invent source IDs.
+7) Never use first-person pronouns (I, we, my, our, 我, 我们); refer to speakers neutrally.
+8) Write every human-readable field in Simplified Chinese, even if the notes are in another language. Translate facts into Chinese; keep proper nouns (names, places, titles, product names) in their original form.
 
 Return strict JSON with:
 {
@@ -83,20 +87,20 @@ Return strict JSON with:
   "topics": [{"topic":"", "details":"", "sourceSegmentIds":["S1"]}],
   "commitments": [{"item":"", "owner":"", "due":"", "sourceSegmentIds":["S1"]}],
   "unresolved": [{"item":"", "sourceSegmentIds":["S1"]}],
-  "caveat": "Sources are references, not proof."
+  "caveat": "来源仅供参考，不构成证据。"
 }`;
 
 let processingActive = false;
 let processingAbort: AbortController | null = null;
 let enrollmentActive = false;
-let processingPromise: Promise<{ processed: number; failed: number; skipped: boolean }> | null = null;
+let processingPromise: Promise<{ processed: number; failed: number; deleted: number; skipped: boolean }> | null = null;
 const generatingControllers = new Map<string, AbortController>();
 const generatingPromises = new Map<string, Promise<DailyDiary>>();
 let lifecycleEpoch = 0;
 let lifecycleMutation: Promise<void> = Promise.resolve();
 let lifecycleMutationReason = "";
 
-function makeAbortError(message = "Diary operation canceled"): Error {
+function makeAbortError(message = "日记操作已取消"): Error {
   const error = new Error(message);
   error.name = "AbortError";
   return error;
@@ -164,6 +168,41 @@ function segmentNotesScope(id: string): string {
   return `diary:notes:${id}`;
 }
 
+const NOISE_TAG_RE = /(?:【|\[|\()\s*(音乐|掌声|笑声|噪声|噪音|环境音|静音|silence|music|noise|applause|laughter)\s*(?:】|\]|\))/gi;
+const LETTER_OR_NUMBER_RE = /\p{L}|\p{N}/gu;
+
+function isMeaninglessTranscript(text: string): boolean {
+  // 去掉标点、空白和常见非语音标注后，少于 2 个有效字符（如单个语气词）视为无意义
+  return (text.replace(NOISE_TAG_RE, "").match(LETTER_OR_NUMBER_RE)?.length ?? 0) < 2;
+}
+
+async function deleteMeaninglessSegment(segment: DiarySegment): Promise<void> {
+  await clearSegmentCheckpoints(segment.id, !!segment.filePath);
+  const native = await getNative();
+  if (native) {
+    try {
+      await native.deleteDiarySegment(segment.id);
+    } catch {
+      // 原生文件清理失败时仍然删除本地记录，避免无意义片段反复进入队列
+    }
+  }
+  await deleteSegment(segment.id);
+}
+
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index]);
+    }
+  }));
+  return results;
+}
+
 async function clearSegmentCheckpoints(id: string, clearLegacy = false): Promise<void> {
   await deleteProcessingCheckpoints(segmentTranscriptScope(id));
   await deleteProcessingCheckpoints(segmentNotesScope(id));
@@ -223,9 +262,9 @@ function isSupportedPlatform(): boolean {
 }
 
 function platformMessage(): string {
-  if (Platform.OS === "android") return "Diary capture is available on Android.";
-  if (Platform.OS === "ios") return "Diary capture is not available on iOS in this build.";
-  return "Diary capture is Android-only. Web cannot simulate background capture.";
+  if (Platform.OS === "android") return "日记采集已在 Android 设备上就绪。";
+  if (Platform.OS === "ios") return "当前构建在 iOS 上不支持日记采集。";
+  return "日记采集仅支持 Android，Web 无法模拟后台采集。";
 }
 
 async function getNative(): Promise<NativeModule | null> {
@@ -242,11 +281,11 @@ async function ensureDiaryMicPermission(native: NativeModule | null): Promise<vo
   if (!current?.granted) {
     const requested = await audio.requestRecordingPermissionsAsync();
     if (!requested?.granted) {
-      throw new Error("Microphone permission denied");
+      throw new Error("麦克风权限被拒绝");
     }
   }
   if (native?.hasPermission && !native.hasPermission()) {
-    throw new Error("Microphone permission denied");
+    throw new Error("麦克风权限被拒绝");
   }
 }
 
@@ -287,6 +326,11 @@ function assertNoObviousFirstPerson(text: string, context: string): void {
   }
 }
 
+function dropOutOfScopeMarkers(text: string, allowedIds: string[]): string {
+  const allowed = new Set(allowedIds);
+  return text.replace(/\[\[SRC:([A-Za-z0-9._-]+)\]\]/g, (match, id) => (allowed.has(id) ? match : ""));
+}
+
 function assertSourceSubsetOrThrow(output: string, allowedSourceIds: string[], context: string): string[] {
   const allowed = new Set(allowedSourceIds);
   const retained = extractSourceMarkers(output);
@@ -302,15 +346,17 @@ function assertSourceSubsetOrThrow(output: string, allowedSourceIds: string[], c
 }
 
 function buildDiaryBudgets(localDate: string, contextLimit: number): DiaryBudgets {
-  const finalOutputTokens = 1536;
+  const finalOutputTokens = 4096;
   const finalUserPrefix = `Local date: ${localDate}\nSummarize strictly from notes with [[SRC:*]] evidence.\n\n`;
   const protocolReserve = 1024;
   const available = contextLimit - textBytes(DAILY_SYSTEM) - textBytes(finalUserPrefix) - finalOutputTokens - protocolReserve;
-  const notesBudget = Math.max(128, Math.floor(available));
+  // 存储层的每日笔记上限，生成预算与存储必须一致，否则会生成完却保存失败
+  const notesBudget = Math.min(DIARY_NOTES_BUDGET, Math.max(128, Math.floor(available)));
   if (notesBudget < 128 || contextLimit < 8192) {
     throw new Error(`Model context ${contextLimit} is insufficient for minimum diary generation budget`);
   }
-  const reduceOutputTokens = Math.max(128, Math.min(1024, Math.floor(notesBudget / 4)));
+  // 归并输入接近 6000 字节，输出上限必须足够大，否则会被 finish_reason=length 截断
+  const reduceOutputTokens = 4096;
   return {
     notesBudget,
     reduceOutputTokens,
@@ -381,7 +427,7 @@ function normalizeContent(content: any): DailyDiaryContent {
       item: typeof item?.item === "string" ? item.item : "",
       sourceSegmentIds: asArray(item?.sourceSegmentIds).filter((x: any) => typeof x === "string"),
     })),
-    caveat: "Sources are references, not proof.",
+    caveat: "来源仅供参考，不构成证据。",
   };
 }
 
@@ -409,7 +455,7 @@ async function getNativeStatusOrDefault(): Promise<DiaryNativeStatus> {
     return {
       active: false,
       paused: false,
-      error: error?.message ?? "Diary status unavailable",
+      error: error?.message ?? "日记状态不可用",
       hasSpeakerProfile: false,
       modelsReady: false,
     };
@@ -417,10 +463,13 @@ async function getNativeStatusOrDefault(): Promise<DiaryNativeStatus> {
 }
 
 async function stopCaptureAndWaitInactive(): Promise<void> {
-  const checks = [80, 160, 320, 500, 800];
-  for (const delayMs of checks) {
+  const native = await getNative();
+  const delays = [60, 100, 150, 250, 400, 600, 800];
+  for (const delayMs of delays) {
     const status = await getNativeStatusOrDefault();
     if (!status.active) return;
+    // 停止请求可能早于服务真正启动完成，这里持续补发停止，确保最终一定停住
+    await native?.stopDiary().catch(() => {});
     await new Promise(resolve => setTimeout(resolve, delayMs));
   }
 }
@@ -456,7 +505,7 @@ async function reduceSingleSourceBlock(
     signal,
   );
 
-  return { text: `[[SRC:${sourceId}]] [${identityTag}]\n${sanitizeForMarkers(reducedBody.trim())}`, sourceIds: [sourceId] };
+  return { text: `[[SRC:${sourceId}]] [${identityTag}]\n${dropOutOfScopeMarkers(sanitizeForMarkers(reducedBody.trim()), [sourceId])}`, sourceIds: [sourceId] };
 }
 
 async function buildBoundedDayNotes(localDate: string, segments: DiarySegment[], budgets: DiaryBudgets, signal?: AbortSignal): Promise<string> {
@@ -481,44 +530,67 @@ async function buildBoundedDayNotes(localDate: string, segments: DiarySegment[],
     normalizedBlocks.push(await reduceSingleSourceBlock(block.id, block.identityTag, block.text, budgets.notesBudget, budgets.reduceOutputTokens, signal));
   }
 
-  const reduceChunk = async (chunkText: string, chunkSourceIds: string[]): Promise<{ text: string; sourceIds: string[] }> => {
-    const reduced = await callLLM(REDUCE_SYSTEM, chunkText, undefined, budgets.reduceOutputTokens, true, { signal, timeoutMs: 60000 });
-    if (!reduced.trim() || textBytes(reduced) > budgets.notesBudget) {
-      throw new Error(`Bounded note reduction output is empty or exceeds ${budgets.notesBudget} bytes`);
+  const reduceChunk = async (chunkText: string, chunkSourceIds: string[], targetBytes: number): Promise<{ text: string; sourceIds: string[] }> => {
+    const reduced = await callLLM(
+      `${REDUCE_SYSTEM}\n输出必须控制在 ${targetBytes} 字节以内，优先保留带 [[SRC:...]] 标记的关键事实。`,
+      chunkText,
+      undefined,
+      budgets.reduceOutputTokens,
+      true,
+      { signal, timeoutMs: 60000 },
+    );
+    if (!reduced.trim()) {
+      throw new Error(`Bounded note reduction output is empty for ${localDate}`);
     }
-    const retainedIds = assertSourceSubsetOrThrow(reduced, chunkSourceIds, `Diary reduction ${localDate}`);
+    // 模型偶尔会带出其他分块的来源 ID，直接丢弃而不是让整篇日记失败
+    const cleaned = dropOutOfScopeMarkers(reduced, chunkSourceIds);
+    const retainedIds = assertSourceSubsetOrThrow(cleaned, chunkSourceIds, `Diary reduction ${localDate}`);
     if (chunkSourceIds.length > 0 && retainedIds.length === 0) {
       throw new Error(`Diary reduction ${localDate} dropped all source markers for chunk`);
     }
-    return { text: reduced, sourceIds: retainedIds };
+    return { text: cleaned.trim(), sourceIds: retainedIds };
   };
 
-  let current = packSourceBlocks(normalizedBlocks, budgets.notesBudget);
+  // 先用半预算打包，给归并输出留出余量，避免单次输出超过存储上限
+  let current = packSourceBlocks(normalizedBlocks, Math.floor(budgets.notesBudget / 2));
   if (!current.length) return "";
 
-  while (current.length > 1 || textBytes(current[0].text) > budgets.notesBudget) {
-    const next: Array<{ text: string; sourceIds: string[] }> = [];
-    for (const chunk of current) {
-      checkAbort(signal);
-      if (textBytes(chunk.text) <= budgets.notesBudget && current.length === 1) {
-        next.push(chunk);
-        continue;
-      }
-      next.push(await reduceChunk(chunk.text, chunk.sourceIds));
+  let round = 0;
+  let stagnantRounds = 0;
+  const totalBytesOf = (items: Array<{ text: string }>) => items.reduce((sum, item) => sum + textBytes(item.text), 0);
+  // 只要总字节数在预算内就停止，不要求压成单一分块
+  while (totalBytesOf(current) > budgets.notesBudget) {
+    round += 1;
+    if (round > 8) {
+      throw new Error("Daily notes reduction exceeded round limit");
     }
+    const totalBytes = totalBytesOf(current);
+    debugLog(`[DiaryPerf] reduce round=${round} chunks=${current.length} bytes=${totalBytes}`);
+    // 每轮的归并互相独立，有限并发可显著缩短日记生成时间
+    const perChunkTarget = Math.max(400, Math.floor(budgets.notesBudget / current.length));
+    const next = await mapLimited(current, 3, async chunk => {
+      checkAbort(signal);
+      return reduceChunk(chunk.text, chunk.sourceIds, perChunkTarget);
+    });
 
     const packed = packSourceBlocks(next, budgets.notesBudget);
-    const oldBytes = current.reduce((sum, item) => sum + textBytes(item.text), 0);
-    const newBytes = packed.reduce((sum, item) => sum + textBytes(item.text), 0);
-    if (newBytes >= oldBytes && packed.length >= current.length) {
-      throw new Error("Diary bounded-note reduction did not shrink; refusing partial facts");
+    const oldBytes = totalBytesOf(current);
+    const newBytes = totalBytesOf(packed);
+    // 允许某一轮字节数略增，只要总字节仍有下降就继续；连续两轮没有进展才失败
+    if (newBytes >= oldBytes) {
+      stagnantRounds += 1;
+      if (stagnantRounds >= 2) {
+        throw new Error("Diary bounded-note reduction did not shrink; refusing partial facts");
+      }
+    } else {
+      stagnantRounds = 0;
     }
     current = packed;
   }
 
-  const finalText = current[0].text.trim();
+  const finalText = current.map(item => item.text.trim()).filter(Boolean).join("\n\n");
   if (!finalText) return "";
-  assertSourceSubsetOrThrow(finalText, current[0].sourceIds, `Diary final bounded notes ${localDate}`);
+  assertSourceSubsetOrThrow(finalText, current.flatMap(item => item.sourceIds), `Diary final bounded notes ${localDate}`);
   return finalText;
 }
 
@@ -615,25 +687,48 @@ export async function prepareDiaryModels(): Promise<void> {
 
 export async function startDiaryCapture(): Promise<void> {
   await withLifecycleMutation("starting-capture", async () => {
+    const startEpoch = lifecycleEpoch;
     const settings = await getDiarySettings();
     if (!settings.consentGranted) {
-      throw new Error("Consent is required before diary capture can start");
+      throw new Error("需要先授予隐私授权才能开始采集");
     }
     const native = await getNative();
     if (!native) throw new Error(platformMessage());
     await ensureDiaryMicPermission(native);
+    // 启动途中如果用户点了停止，就不能再把服务拉起来
+    if (startEpoch !== lifecycleEpoch) {
+      throw makeAbortError("日记采集启动已被停止操作取消");
+    }
     await native.startDiary();
+    // 前台服务启动是异步的，轮询等待其真正就绪，避免界面读到旧的停止状态
+    for (let i = 0; i < 10; i++) {
+      const nativeStatus = await native.getDiaryStatus();
+      if (nativeStatus.active) break;
+      if (startEpoch !== lifecycleEpoch) break;
+      await new Promise(resolve => setTimeout(resolve, 150));
+    }
+    if (startEpoch !== lifecycleEpoch) {
+      // 停止操作已抢占启动流程，立即回滚原生服务
+      await native.stopDiary().catch(() => {});
+      throw makeAbortError("日记采集启动已被停止操作取消");
+    }
     await checkConsentOrThrow("capture start");
   });
 }
 
 export async function stopDiaryCapture(): Promise<void> {
-  await withLifecycleMutation("stopping-capture", async () => {
-    const native = await getNative();
-    if (!native) throw new Error(platformMessage());
-    await native.stopDiary();
-    await stopCaptureAndWaitInactive();
-  });
+  // 停止采集是优先级操作：先抢占/中止正在跑的转写与生成任务，
+  // 再直接停原生服务，不排在生命周期队列后面等待。
+  lifecycleEpoch += 1;
+  processingAbort?.abort();
+  for (const controller of generatingControllers.values()) {
+    controller.abort();
+  }
+
+  const native = await getNative();
+  if (!native) throw new Error(platformMessage());
+  await native.stopDiary();
+  await stopCaptureAndWaitInactive();
 }
 
 export async function pauseDiaryCapture(): Promise<void> {
@@ -719,11 +814,36 @@ export async function deleteSingleSegment(id: string, includeDerived = false): P
   });
 }
 
-export async function processDiaryQueue(limit = 4): Promise<{ processed: number; failed: number; skipped: boolean }> {
+export async function deleteFailedSegments(): Promise<{ deleted: number }> {
+  return withLifecycleMutation("deleting-failed-segments", async () => {
+    await cancelAndDrainDiaryWorkers();
+    const status = await getNativeStatusOrDefault();
+    if (status.active) throw new Error("采集中无法删除片段");
+    const failed = (await listAllDiarySegments()).filter(item => item.state === "failed");
+    if (!failed.length) return { deleted: 0 };
+
+    const native = await getNative();
+    for (const segment of failed) {
+      await clearSegmentCheckpoints(segment.id, !!segment.filePath);
+      if (native) {
+        try {
+          await native.deleteDiarySegment(segment.id);
+        } catch {
+          // 原生文件清理失败时仍然删除本地记录，避免失败片段反复堆积
+        }
+      }
+    }
+    await deleteSegmentsByIds(failed.map(item => item.id));
+    // 失败片段从未参与日记生成，删除它们不需要把已生成的日记标记为过期
+    return { deleted: failed.length };
+  });
+}
+
+export async function processDiaryQueue(limit = 4): Promise<{ processed: number; failed: number; deleted: number; skipped: boolean }> {
   await waitForLifecycleMutation();
   const settings = await getDiarySettings();
-  if (!settings.consentGranted) return { processed: 0, failed: 0, skipped: true };
-  if (processingActive) return { processed: 0, failed: 0, skipped: true };
+  if (!settings.consentGranted) return { processed: 0, failed: 0, deleted: 0, skipped: true };
+  if (processingActive) return { processed: 0, failed: 0, deleted: 0, skipped: true };
 
   const run = (async () => {
     const startEpoch = await assertLifecycleOpen("queue processing");
@@ -731,84 +851,136 @@ export async function processDiaryQueue(limit = 4): Promise<{ processed: number;
     processingAbort = new AbortController();
     let processed = 0;
     let failed = 0;
+    let deleted = 0;
+
+    const processSegment = async (segment: DiarySegment): Promise<void> => {
+      try {
+        checkAbort(processingAbort!.signal);
+        checkLifecycleOrThrow(startEpoch, `segment ${segment.id}`);
+        await checkConsentOrThrow(`segment ${segment.id}`);
+        await markSegmentState(segment.id, "transcribing", "");
+
+        // 过短的片段基本是环境噪声，直接删除，避免为无意义音频消耗一次远端转写
+        if (segment.durationMs > 0 && segment.durationMs < 500) {
+          debugLog(`[DiaryPerf] ${segment.id} skipped=short duration=${segment.durationMs}ms`);
+          await deleteMeaninglessSegment(segment);
+          deleted += 1;
+          return;
+        }
+
+        let speakerAuto: DiarySpeakerAuto = "unknown";
+        let speakerSimilarity: number | null = null;
+        let profileRevision: string | null = null;
+        let speakerWindows: DiarySpeakerWindow[] = [];
+
+        const identifyStartedAt = Date.now();
+        try {
+          const native = await getNative();
+          if (native) {
+            const speaker = await native.identifySpeaker(segment.filePath);
+            speakerAuto = speaker.speaker;
+            speakerSimilarity = speaker.similarity;
+            profileRevision = speaker.profileRevision;
+            speakerWindows = Array.isArray(speaker.windows) ? speaker.windows : [];
+          }
+        } catch {
+          speakerAuto = "unknown";
+        }
+        debugLog(`[DiaryPerf] ${segment.id} identify=${Date.now() - identifyStartedAt}ms`);
+
+        checkAbort(processingAbort!.signal);
+        checkLifecycleOrThrow(startEpoch, `segment ${segment.id} after identify`);
+        await checkConsentOrThrow(`segment ${segment.id} after identify`);
+
+        let transcript: string;
+        const sttStartedAt = Date.now();
+        try {
+          transcript = await transcribeRemote(
+            segment.filePath as string,
+            processingAbort!.signal,
+            segmentTranscriptScope(segment.id),
+          );
+        } catch (error) {
+          if (isAbortError(error)) throw error;
+          const message = error instanceof Error ? error.message : String(error ?? "");
+          // 沉默/环境音片段没有可转写内容，或原始音频已被清理，直接删除而不是记成失败
+          if (/返回空文本|empty text|音频文件不存在|audio_file_not_found/i.test(message)) {
+            debugLog(`[DiaryPerf] ${segment.id} skipped=empty-stt`);
+            await deleteMeaninglessSegment(segment);
+            deleted += 1;
+            return;
+          }
+          throw error;
+        }
+        checkAbort(processingAbort!.signal);
+        checkLifecycleOrThrow(startEpoch, `segment ${segment.id} after stt`);
+        await checkConsentOrThrow(`segment ${segment.id} after stt`);
+        debugLog(`[DiaryPerf] ${segment.id} stt=${Date.now() - sttStartedAt}ms chars=${transcript.length}`);
+
+        if (isMeaninglessTranscript(transcript)) {
+          debugLog(`[DiaryPerf] ${segment.id} skipped=meaningless`);
+          await deleteMeaninglessSegment(segment);
+          deleted += 1;
+          return;
+        }
+
+        const notesStartedAt = Date.now();
+        const reducedNeutral = await compactTranscript(sanitizeForMarkers(transcript), undefined, {
+          signal: processingAbort!.signal,
+          checkpointScope: segmentNotesScope(segment.id),
+        });
+        debugLog(`[DiaryPerf] ${segment.id} notes=${Date.now() - notesStartedAt}ms`);
+        // 分段笔记里出现第一人称是正常的对话引用，不应整段失败；
+        // 最终每日日记会统一做中性化校验。
+        if (segment.manualIdentity !== "confirmed_self" && FIRST_PERSON_RE.test(reducedNeutral)) {
+          debugLog(`[DiaryPerf] ${segment.id} notes contain first-person terms`);
+        }
+        const factualNotes = `[[SRC:${segment.id}]] [${segmentIdentityTag(segment)}]\n${sanitizeForMarkers(reducedNeutral.trim())}`;
+
+        checkAbort(processingAbort!.signal);
+        checkLifecycleOrThrow(startEpoch, `segment ${segment.id} before save`);
+        await checkConsentOrThrow(`segment ${segment.id} before save`);
+        await markSegmentResult(segment.id, {
+          transcript,
+          factualNotes,
+          speakerAuto,
+          speakerSimilarity,
+          profileRevision,
+          windows: speakerWindows,
+        });
+        processed += 1;
+      } catch (error: any) {
+        if (isAbortError(error)) {
+          await markSegmentState(segment.id, "pending", "");
+          return;
+        }
+        failed += 1;
+        debugLog(`[DiaryPerf] ${segment.id} failed=${error?.message ?? "unknown"}`);
+        await markSegmentState(segment.id, "failed", error?.message ?? "Diary segment processing failed");
+      }
+    };
 
     try {
       checkLifecycleOrThrow(startEpoch, "queue import");
       await checkConsentOrThrow("queue import");
       await importDiarySegmentsFromNative();
       checkLifecycleOrThrow(startEpoch, "queue load pending");
-      const pending = await listPendingDiarySegments(Math.max(1, limit));
+      // limit <= 0 表示一次性处理当前所有待处理片段
+      const pending = await listPendingDiarySegments(limit > 0 ? limit : 10000);
 
-      for (const segment of pending) {
-        try {
-          checkAbort(processingAbort.signal);
-          checkLifecycleOrThrow(startEpoch, `segment ${segment.id}`);
-          await checkConsentOrThrow(`segment ${segment.id}`);
-          await markSegmentState(segment.id, "transcribing", "");
-
-          let speakerAuto: DiarySpeakerAuto = "unknown";
-          let speakerSimilarity: number | null = null;
-          let profileRevision: string | null = null;
-          let speakerWindows: DiarySpeakerWindow[] = [];
-
-          try {
-            const native = await getNative();
-            if (native) {
-              const speaker = await native.identifySpeaker(segment.filePath);
-              speakerAuto = speaker.speaker;
-              speakerSimilarity = speaker.similarity;
-              profileRevision = speaker.profileRevision;
-              speakerWindows = Array.isArray(speaker.windows) ? speaker.windows : [];
-            }
-          } catch {
-            speakerAuto = "unknown";
-          }
-
-          checkAbort(processingAbort.signal);
-          checkLifecycleOrThrow(startEpoch, `segment ${segment.id} after identify`);
-          await checkConsentOrThrow(`segment ${segment.id} after identify`);
-
-          const transcript = await transcribeRemote(
-            segment.filePath as string,
-            processingAbort.signal,
-            segmentTranscriptScope(segment.id),
-          );
-          checkAbort(processingAbort.signal);
-          checkLifecycleOrThrow(startEpoch, `segment ${segment.id} after stt`);
-          await checkConsentOrThrow(`segment ${segment.id} after stt`);
-
-          const reducedNeutral = await compactTranscript(sanitizeForMarkers(transcript), undefined, {
-            signal: processingAbort.signal,
-            checkpointScope: segmentNotesScope(segment.id),
-          });
-          if (segment.manualIdentity !== "confirmed_self") {
-            assertNoObviousFirstPerson(reducedNeutral, `Segment ${segment.id} factual notes`);
-          }
-          const factualNotes = `[[SRC:${segment.id}]] [${segmentIdentityTag(segment)}]\n${sanitizeForMarkers(reducedNeutral.trim())}`;
-
-          checkAbort(processingAbort.signal);
-          checkLifecycleOrThrow(startEpoch, `segment ${segment.id} before save`);
-          await checkConsentOrThrow(`segment ${segment.id} before save`);
-          await markSegmentResult(segment.id, {
-            transcript,
-            factualNotes,
-            speakerAuto,
-            speakerSimilarity,
-            profileRevision,
-            windows: speakerWindows,
-          });
-          processed += 1;
-        } catch (error: any) {
-          if (isAbortError(error)) {
-            await markSegmentState(segment.id, "pending", "");
-            continue;
-          }
-          failed += 1;
-          await markSegmentState(segment.id, "failed", error?.message ?? "Diary segment processing failed");
+      // 片段之间互相独立：并发处理可显著缩短整体等待时间
+      let cursor = 0;
+      const workerCount = Math.min(3, pending.length);
+      await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (true) {
+          const index = cursor;
+          cursor += 1;
+          if (index >= pending.length) return;
+          await processSegment(pending[index]);
         }
-      }
+      }));
 
-      return { processed, failed, skipped: false };
+      return { processed, failed, deleted, skipped: false };
     } finally {
       processingAbort = null;
       processingActive = false;
@@ -821,6 +993,10 @@ export async function processDiaryQueue(limit = 4): Promise<{ processed: number;
   } finally {
     if (processingPromise === run) processingPromise = null;
   }
+}
+
+export async function processAllDiarySegments(): Promise<{ processed: number; failed: number; deleted: number; skipped: boolean }> {
+  return processDiaryQueue(0);
 }
 
 export function cancelDiaryProcessing(): void {
@@ -844,7 +1020,7 @@ export async function generateDailyDiary(localDate: string, signal?: AbortSignal
         topics: [],
         commitments: [],
         unresolved: [],
-        caveat: "Sources are references, not proof.",
+        caveat: "来源仅供参考，不构成证据。",
       };
       await saveDailyDiary(localDate, { notes: "", sourceSegmentIds: [], content: emptyContent });
       const saved = await getDailyDiary(localDate);
@@ -870,22 +1046,36 @@ export async function generateDailyDiary(localDate: string, signal?: AbortSignal
         throw new Error(`Bounded notes for ${localDate} contain no machine source markers`);
       }
 
-      const finalRaw = await callLLM(
-        DAILY_SYSTEM,
-        `${budgets.finalUserPrefix}${boundedNotes || "No notes available. Return empty arrays."}`,
-        undefined,
-        budgets.finalOutputTokens,
-        true,
-        { signal: linked.signal, timeoutMs: 90000 },
-      );
-      checkAbort(linked.signal);
+      const finalNotes = boundedNotes || "No notes available. Return empty arrays.";
+      let content: DailyDiaryContent | null = null;
+      let validationError: Error | null = null;
+      // 模型偶尔会漏写 sourceSegmentIds，校验失败时补一次纠正重试
+      for (let attempt = 0; attempt < 2 && !content; attempt += 1) {
+        const correction = validationError
+          ? `\n\nYour previous JSON failed validation: ${validationError.message}. Every non-empty timeline/topic/commitment/unresolved item must include at least one sourceSegmentIds entry copied exactly from the [[SRC:...]] labels above. Return strict JSON only.`
+          : "";
+        const finalRaw = await callLLM(
+          DAILY_SYSTEM,
+          `${budgets.finalUserPrefix}${finalNotes}${correction}`,
+          undefined,
+          budgets.finalOutputTokens,
+          true,
+          { signal: linked.signal, timeoutMs: 90000 },
+        );
+        checkAbort(linked.signal);
+        try {
+          const candidate = normalizeContent(safeParseJson(finalRaw));
+          validateNeutralDailyContent(candidate);
+          validateSources(candidate, retainedSourceIds);
+          content = candidate;
+        } catch (error: any) {
+          validationError = error instanceof Error ? error : new Error(String(error));
+        }
+      }
+      if (!content) throw validationError ?? new Error("日记内容校验失败");
       checkLifecycleOrThrow(startEpoch, `daily generation ${localDate} after final`);
       await checkConsentOrThrow(`daily generation ${localDate} after final`);
 
-      const parsed = safeParseJson(finalRaw);
-      const content = normalizeContent(parsed);
-      validateNeutralDailyContent(content);
-      validateSources(content, retainedSourceIds);
       await saveDailyDiary(
         localDate,
         {
@@ -900,7 +1090,7 @@ export async function generateDailyDiary(localDate: string, signal?: AbortSignal
       return saved;
     } catch (error: any) {
       if (!isAbortError(error)) {
-        await markDailyDiaryFailed(localDate, error?.message ?? "Daily generation failed");
+        await markDailyDiaryFailed(localDate, error?.message ?? "日记生成失败");
       }
       throw error;
     }
@@ -920,25 +1110,75 @@ export async function handleDiaryForeground(): Promise<void> {
   const settings = await getDiarySettings();
   if (!settings.consentGranted) return;
   await importDiarySegmentsFromNative();
-  await processDiaryQueue(6);
+  // 失败片段自动重试有限次数，网络抖动或校验策略调整后无需手动逐条重试
+  await requeueRetryableFailedSegments(3).catch(() => {});
+  await processDiaryQueue(8);
+  await autoApplyRetention().catch(() => {});
+}
+
+async function requeueRetryableFailedSegments(maxRetryCount: number): Promise<void> {
+  const failed = (await listAllDiarySegments()).filter(item => item.state === "failed");
+  for (const item of failed) {
+    // 原始音频已经不存在，重试也不可能成功，直接清理
+    if (/音频文件不存在|audio_file_not_found/i.test(item.lastError)) {
+      await deleteMeaninglessSegment(item).catch(() => {});
+      continue;
+    }
+    if (item.retryCount >= maxRetryCount) continue;
+    // 保留转写检查点（重试无需重新上传），但清除旧笔记以应用最新的中性化提示词
+    await deleteProcessingCheckpoints(segmentNotesScope(item.id));
+    await markSegmentState(item.id, "pending", "");
+  }
+}
+
+function localDateOf(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+let lastAutoDailyAttemptMs = 0;
+let autoDailyRunning = false;
+
+// 跨天后自动生成前一天的每日日记；应用不在运行时无法定时，启动/回前台时补跑
+export async function autoUpdateDailyDiary(): Promise<void> {
+  if (!isSupportedPlatform() || autoDailyRunning) return;
+  const settings = await getDiarySettings();
+  if (!settings.consentGranted) return;
+  const now = new Date();
+  const target = localDateOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+  const existing = await getDailyDiary(target);
+  if (existing?.state === "ready") return;
+  // 失败后 10 分钟内不重复请求，避免网络故障时反复轰炸模型
+  if (Date.now() - lastAutoDailyAttemptMs < 10 * 60 * 1000) return;
+  lastAutoDailyAttemptMs = Date.now();
+  autoDailyRunning = true;
+  try {
+    await generateDailyDiary(target);
+  } catch {
+    // 自动更新失败不阻塞其他维护任务，用户仍可手动更新
+  } finally {
+    autoDailyRunning = false;
+  }
 }
 
 export async function startVoiceEnrollmentCapture(): Promise<void> {
   await assertLifecycleOpen("start enrollment");
   if (!isSupportedPlatform()) throw new Error(platformMessage());
-  if (enrollmentActive) throw new Error("Enrollment capture is already active");
-  if (isRecordingActive()) throw new Error("Another recording is active");
+  if (enrollmentActive) throw new Error("声纹录入已在进行中");
+  if (isRecordingActive()) throw new Error("当前有其他录音正在进行");
   const started = await startRecording();
   if (started.simulated) {
     await cleanupRecording();
-    throw new Error("Native recording is required for voice enrollment");
+    throw new Error("声纹录入需要真实麦克风录音");
   }
   enrollmentActive = true;
 }
 
 export async function finishVoiceEnrollmentCapture(): Promise<{ durationMs: number }> {
   await assertLifecycleOpen("finish enrollment");
-  if (!enrollmentActive) throw new Error("Enrollment capture is not active");
+  if (!enrollmentActive) throw new Error("声纹录入未开始");
   enrollmentActive = false;
   let uri = "";
   let durationMs = 0;
@@ -947,11 +1187,28 @@ export async function finishVoiceEnrollmentCapture(): Promise<{ durationMs: numb
     uri = result.uri;
     durationMs = result.durationMs;
     if (durationMs < 15000 || durationMs > 30000) {
-      throw new Error("Enrollment sample must be between 15 and 30 seconds");
+      throw new Error("声纹样本需在 15-30 秒之间");
     }
     const native = await getNative();
     if (!native) throw new Error(platformMessage());
-    await native.enrollSpeaker(uri);
+    try {
+      await native.enrollSpeaker(uri);
+    } catch (error: any) {
+      const raw = String(error?.message ?? "");
+      if (raw.includes("enroll_not_clean_solo_speech")) {
+        throw new Error("录音内容不一致：请在安静环境下由同一个人连续说话 15-30 秒后重试");
+      }
+      if (raw.includes("enroll_insufficient_windows")) {
+        throw new Error("有效语音太短：请连续说话 15 秒以上");
+      }
+      if (raw.includes("enroll_too_short")) {
+        throw new Error("录音不足 15 秒，请重新录入");
+      }
+      if (raw.includes("enroll_too_long")) {
+        throw new Error("录音超过 30 秒，请重新录入");
+      }
+      throw error;
+    }
     const invalidated = await clearAutoSpeakerEvidence();
     for (const id of invalidated.segmentIds) {
       await deleteProcessingCheckpoints(segmentNotesScope(id));
@@ -1000,37 +1257,60 @@ export async function applyRetentionPlan(options: { allowUnprocessedDelete: bool
   return withLifecycleMutation("retention-cleanup", async () => {
     await cancelAndDrainDiaryWorkers();
     const status = await getNativeStatusOrDefault();
-    if (status.active) throw new Error("Cannot run retention cleanup while diary capture is active");
+    if (status.active) throw new Error("日记采集进行中，暂不能执行保留清理");
     const plan = await planRetentionCleanup();
-    if (plan.blockedUnprocessedSegmentIds.length && !options.allowUnprocessedDelete) {
-      throw new Error("Retention plan has unprocessed backlog; explicit confirmation required");
-    }
 
     const native = await getNative();
-    const deletable = options.allowUnprocessedDelete
-      ? [...plan.deletableSegmentIds, ...plan.blockedUnprocessedSegmentIds]
-      : plan.deletableSegmentIds;
-
     const deleted: string[] = [];
     const blocked: string[] = [];
-    const dirtyDates = new Set<string>();
-    for (const id of deletable) {
-      const segment = await getDiarySegment(id);
-      await clearSegmentCheckpoints(id, !!segment?.filePath);
+    const forced: string[] = [];
+
+    // 已转写成功的片段：只删音频，保留转写文本与每日日记
+    for (const id of plan.deletableSegmentIds) {
       try {
         if (native) await native.deleteDiarySegment(id);
-        if (segment) dirtyDates.add(segment.localDate);
+        await markSegmentAudioDeleted(id);
         deleted.push(id);
       } catch {
         blocked.push(id);
       }
     }
-    await deleteSegmentsByIds(deleted);
-    for (const date of dirtyDates) {
-      await markDayDirty(date, "retention-delete", true);
+
+    // 强制清理未处理片段：音频与记录一并删除
+    if (options.allowUnprocessedDelete) {
+      for (const id of plan.blockedUnprocessedSegmentIds) {
+        const segment = await getDiarySegment(id);
+        await clearSegmentCheckpoints(id, !!segment?.filePath);
+        try {
+          if (native) await native.deleteDiarySegment(id);
+          deleted.push(id);
+          forced.push(id);
+        } catch {
+          blocked.push(id);
+        }
+      }
+      await deleteSegmentsByIds(forced);
+      const dirtyDates = new Set<string>();
+      for (const id of forced) {
+        const segment = await getDiarySegment(id);
+        if (segment) dirtyDates.add(segment.localDate);
+      }
+      for (const date of dirtyDates) {
+        await markDayDirty(date, "retention-delete", true);
+      }
     }
+
     return { deleted, blocked };
   });
+}
+
+// 前台时自动执行：仅清理已转写成功且超过保留期的音频
+export async function autoApplyRetention(): Promise<void> {
+  const status = await getNativeStatusOrDefault();
+  if (status.active) return;
+  const plan = await planRetentionCleanup();
+  if (!plan.deletableSegmentIds.length) return;
+  await applyRetentionPlan({ allowUnprocessedDelete: false });
 }
 
 export async function purgeDiaryData(includeDerived: boolean): Promise<void> {

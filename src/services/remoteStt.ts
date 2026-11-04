@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 import { File, Paths, FileMode } from "expo-file-system";
 import { debugLog } from "./debug";
 import { buildPcm16MonoWavHeader, parsePcm16MonoWavHeader } from "./whisper";
+import { postMultipart } from "./nativeHttp";
 
 const SILICONFLOW_STT_URL = "https://api.siliconflow.cn/v1/audio/transcriptions";
 const REMOTE_MODEL = "FunAudioLLM/SenseVoiceSmall";
@@ -53,7 +54,7 @@ type ParsedNativeWav = {
 
 function parseNativeWav(file: File): ParsedNativeWav {
   const size = file.size ?? 0;
-  if (!file.exists || size <= 44) throw new Error("Remote STT audio file is empty");
+  if (!file.exists || size <= 44) throw new Error("转写音频文件为空");
   const handle = file.open(FileMode.ReadOnly);
   try {
     const first = handle.readBytes(Math.min(size, 1024 * 1024));
@@ -124,17 +125,17 @@ async function uploadMultipartWithXhr(args: {
         const parsed = JSON.parse(xhr.responseText || "{}");
         const text = typeof parsed?.text === "string" ? parsed.text.trim() : "";
         if (!text) {
-          reject(new Error("Remote STT returned empty text"));
+          reject(new Error("远端转写返回空文本"));
           return;
         }
         resolve(text);
       } catch {
-        reject(new Error("Remote STT returned invalid JSON"));
+        reject(new Error("远端转写返回无效 JSON"));
       }
     });
 
-    xhr.onerror = () => finalize(() => reject(new Error("Remote STT network error")));
-    xhr.ontimeout = () => finalize(() => reject(new Error("Remote STT timed out")));
+    xhr.onerror = () => finalize(() => reject(new Error("远端转写网络错误")));
+    xhr.ontimeout = () => finalize(() => reject(new Error("远端转写超时")));
     xhr.onabort = () => finalize(() => reject(makeAbortError()));
 
     if (args.signal) args.signal.addEventListener("abort", abortListener, { once: true });
@@ -150,6 +151,35 @@ async function uploadMultipartWithXhr(args: {
   });
 }
 
+async function uploadWithNativeHttp(args: {
+  key: string;
+  timeoutMs: number;
+  filePart: { uri: string; name: string; type: string } | Blob;
+  fileName: string;
+  mimeType: string;
+}): Promise<string> {
+  if (!(args.filePart as any)?.uri) throw new Error("远端转写原生上传需要文件路径");
+  const res = await postMultipart(
+    SILICONFLOW_STT_URL,
+    { Authorization: `Bearer ${args.key}` },
+    { model: REMOTE_MODEL },
+    { path: (args.filePart as any).uri, name: args.fileName, mimeType: args.mimeType },
+    args.timeoutMs,
+  );
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`Remote STT request failed (HTTP ${res.status})`);
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(res.body || "{}");
+  } catch {
+    throw new Error("远端转写返回无效 JSON");
+  }
+  const text = typeof parsed?.text === "string" ? parsed.text.trim() : "";
+  if (!text) throw new Error("远端转写返回空文本");
+  return text;
+}
+
 async function uploadOnce(args: {
   key: string;
   signal?: AbortSignal;
@@ -158,19 +188,22 @@ async function uploadOnce(args: {
   mimeType: string;
   timeoutMs: number;
 }): Promise<string> {
-  try {
-    return await uploadMultipartWithXhr({
-      ...args,
-      model: REMOTE_MODEL,
-    });
-  } catch (error) {
-    if (isAbortLike(error)) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    if (!isRetryable(message)) throw error;
+  const attempt = async (): Promise<string> => {
+    if (Platform.OS === "android") {
+      return uploadWithNativeHttp(args);
+    }
     return uploadMultipartWithXhr({
       ...args,
       model: REMOTE_MODEL,
     });
+  };
+  try {
+    return await attempt();
+  } catch (error) {
+    if (isAbortLike(error)) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isRetryable(message)) throw error;
+    return attempt();
   }
 }
 
@@ -222,7 +255,7 @@ export async function transcribeRemote(
 ): Promise<string> {
   const key = await getApiKey();
   if (!key) {
-    throw new Error("No remote STT API key configured");
+    throw new Error("未配置 SiliconFlow API 密钥");
   }
 
   const fileUri = cleanFileUri(audioUri);
@@ -234,13 +267,13 @@ export async function transcribeRemote(
   if (Platform.OS === "web" || fileUri.startsWith("blob:")) {
     const blobUri = fileUri;
     if (Platform.OS !== "web") {
-      throw new Error("Remote STT blob URIs are only supported on web");
+      throw new Error("远端转写 blob 链接仅支持 Web");
     }
     const response = await fetch(blobUri);
     const blob = await response.blob();
-    if (blob.size <= 0) throw new Error("Remote STT audio blob is empty");
+    if (blob.size <= 0) throw new Error("转写音频数据为空");
     if (blob.size > MAX_CHUNK_BYTES) {
-      throw new Error("Remote STT web upload is too large; please provide shorter PCM WAV audio");
+      throw new Error("Web 上传音频过大，请缩短录音时长");
     }
     return uploadOnce({
       key,
@@ -254,7 +287,7 @@ export async function transcribeRemote(
 
   const source = new File(fileUri);
   if (!source.exists || (source.size ?? 0) <= 0) {
-    throw new Error("Remote STT audio file is empty or missing");
+    throw new Error("转写音频文件不存在或为空");
   }
 
   const wav = parseNativeWav(source);
@@ -316,7 +349,7 @@ export async function transcribeRemote(
   }
 
   if (!transcriptParts.length || transcriptParts.some(x => !x.trim())) {
-    throw new Error("Remote STT failed: incomplete chunk transcription");
+    throw new Error("远端转写失败：分片结果不完整");
   }
 
   const transcript = transcriptParts.join("\n");

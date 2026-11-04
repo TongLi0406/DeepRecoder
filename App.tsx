@@ -15,10 +15,12 @@ import type { SessionMode, Session } from "./src/types";
 import { initSkillsTable } from "./src/services/skills";
 import { initEmbeddingsTable } from "./src/services/vectorStore";
 import { initQueueTable, drainQueue } from "./src/services/offlineQueue";
+import { seedDefaultApiKey } from "./src/services/api";
+import { seedDefaultSiliconFlowKey } from "./src/services/embedding";
 import { recoverInterruptedSessions } from "./src/services/recovery";
 import { resumeStuckTasks } from "./src/services/processingQueue";
 import { markAppStart, markAppReady } from "./src/services/perf";
-import { handleDiaryForeground, initDiaryService } from "./src/services/diary";
+import { autoUpdateDailyDiary, handleDiaryForeground, initDiaryService } from "./src/services/diary";
 
 export type RootStackParamList = {
   Main: undefined;
@@ -49,6 +51,12 @@ export default function App() {
         initDiaryService(),
       ]);
 
+      // Seed default API keys on first launch only
+      await Promise.all([
+        seedDefaultApiKey(),
+        seedDefaultSiliconFlowKey(),
+      ]);
+
       // Recover interrupted work from previous session
       await recoverInterruptedSessions();
 
@@ -60,6 +68,7 @@ export default function App() {
 
       // Diary import/processing is consent-gated and foreground best-effort.
       handleDiaryForeground().catch(() => {});
+      autoUpdateDailyDiary().catch(() => {});
 
       markAppReady();
     }
@@ -69,11 +78,20 @@ export default function App() {
     const appStateSub = AppState.addEventListener("change", state => {
       if (state === "active") {
         handleDiaryForeground().catch(() => {});
+        autoUpdateDailyDiary().catch(() => {});
       }
     });
 
+    // 前台每分钟做一次日记维护：定期处理新片段，并在跨天后自动生成前一天日记
+    const maintenanceId = setInterval(() => {
+      if (AppState.currentState !== "active") return;
+      handleDiaryForeground().catch(() => {});
+      autoUpdateDailyDiary().catch(() => {});
+    }, 60_000);
+
     return () => {
       appStateSub.remove();
+      clearInterval(maintenanceId);
     };
   }, []);
 

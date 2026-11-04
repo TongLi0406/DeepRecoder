@@ -12,6 +12,18 @@ export const colors = {
 };
 export const fonts = { body: "Manrope", strong: "ManropeSemiBold", reading: "Newsreader" };
 
+// 会话处理阶段的中文名称
+export const PHASE_LABELS: Record<string, string> = {
+  recording: "录音中",
+  queued: "排队中",
+  transcribing: "转写中",
+  summarizing: "总结中",
+  indexing: "索引中",
+  extracting: "技能提取中",
+  done: "已完成",
+  failed: "失败",
+};
+
 export function useReducedMotion() {
   const [reduced, setReduced] = useState(true);
   useEffect(() => {
@@ -113,12 +125,12 @@ export function ScreenHeader({ title, back = false, caption, onBack }: { title: 
   const insets = useSafeAreaInsets();
   return (
     <View style={[uiStyles.header, { paddingTop: Math.max(insets.top, 24) }]}>
-      {back && <IconButton icon={ArrowLeft} label="Back" onPress={onBack ?? (() => navigation.goBack())} />}
+      {back && <IconButton icon={ArrowLeft} label="返回" onPress={onBack ?? (() => navigation.goBack())} />}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={uiStyles.title}>{title}</Text>
         {caption && <Text style={uiStyles.caption}>{caption}</Text>}
       </View>
-      {!back && <IconButton icon={Settings} label="Settings" onPress={() => navigation.navigate("Settings")} />}
+      {!back && <IconButton icon={Settings} label="设置" onPress={() => navigation.navigate("Settings")} />}
     </View>
   );
 }

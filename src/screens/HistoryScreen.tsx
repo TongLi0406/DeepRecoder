@@ -16,23 +16,23 @@ import type { Session } from "../types";
 import { getAllSessions, getSessionById, deleteSession } from "../services/storage";
 import { getCourseGroups, type CourseGroup } from "../services/courses";
 import { ArrowUpRight, AudioLines, Trash2 } from "lucide-react-native";
-import { colors, fonts, IconButton, PageEntrance } from "../ui";
+import { colors, fonts, IconButton, PageEntrance, PHASE_LABELS } from "../ui";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
 
 const MODE_LABELS: Record<string, string> = {
-  "meeting-organizer": "Meeting · Org",
-  "meeting-attendee": "Meeting · Me",
-  "classroom-student": "Class · Student",
-  "classroom-teacher": "Class · Teacher",
+  "meeting-organizer": "会议 · 主持",
+  "meeting-attendee": "会议 · 参会",
+  "classroom-student": "课堂 · 学生",
+  "classroom-teacher": "课堂 · 教师",
 };
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
   const diff = now.getTime() - d.getTime();
-  if (diff < 86400000) return "Today";
-  if (diff < 172800000) return "Yesterday";
+  if (diff < 86400000) return "今天";
+  if (diff < 172800000) return "昨天";
   return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
 }
 
@@ -50,7 +50,7 @@ export default function HistoryScreen() {
       const courseGroups = await getCourseGroups(sessions);
       setGroups(courseGroups);
     } catch {
-      setError("Could not load recordings.");
+      setError("无法加载录音。");
     } finally { setLoading(false); }
   }, []);
 
@@ -72,9 +72,9 @@ export default function HistoryScreen() {
     return (
       <View style={styles.empty}>
         <AudioLines size={32} strokeWidth={1.3} color={colors.muted} />
-        <Text style={styles.emptyTitle}>{error ? "Recordings unavailable" : "No recordings yet"}</Text>
+        <Text style={styles.emptyTitle}>{error ? "录音不可用" : "暂无录音"}</Text>
         {error ? <Text accessibilityRole="alert" style={styles.feedback}>{error}</Text>
-          : <Text style={styles.emptySubtitle}>0 sessions</Text>}
+          : <Text style={styles.emptySubtitle}>0 个会话</Text>}
       </View>
     );
   }
@@ -93,26 +93,26 @@ export default function HistoryScreen() {
         renderSectionHeader={({ section }) => (
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>{section.title}</Text>
-            <Text style={styles.sectionCount}>{section.count} sessions</Text>
+            <Text style={styles.sectionCount}>{section.count} 个会话</Text>
           </View>
         )}
         renderItem={({ item }) => {
           const s = item as CourseGroup["sessions"][0];
           const handleDelete = async () => {
             if (Platform.OS === "web") {
-              if (!window.confirm("Permanently delete this recording and its data?")) return;
+              if (!window.confirm("确定永久删除这条录音及其数据？")) return;
               try { await deleteSession(s.id); await loadData(); }
-              catch { setError("Could not delete the recording."); }
+              catch { setError("无法删除该录音。"); }
               return;
             }
-            Alert.alert("Delete Session", "This will permanently remove the session and its data.", [
-              { text: "Cancel", style: "cancel" },
+            Alert.alert("删除会话", "将永久删除该会话及其数据。", [
+              { text: "取消", style: "cancel" },
               {
-                text: "Delete",
+                text: "删除",
                 style: "destructive",
                 onPress: async () => {
                   try { await deleteSession(s.id); await loadData(); }
-                  catch { setError("Could not delete the recording."); }
+                  catch { setError("无法删除该录音。"); }
                 },
               },
             ]);
@@ -122,28 +122,28 @@ export default function HistoryScreen() {
             <TouchableOpacity
               style={styles.openButton}
               accessibilityRole="button"
-              accessibilityLabel={`Open ${s.topic || "Untitled"}`}
+              accessibilityLabel={`打开 ${s.topic || "未命名录音"}`}
               onPress={() => {
                 getSessionById(s.id).then((full) => {
                   if (full) {
                     navigation.navigate("Summary", { session: full });
                   }
-                }).catch(() => setError("Could not open the recording."));
+                }).catch(() => setError("无法打开该录音。"));
               }}
               onLongPress={handleDelete}
             >
               <View style={styles.itemLeft}>
                 <Text style={styles.itemTopic} numberOfLines={1}>
-                  {s.topic || "Untitled"}
+                  {s.topic || "未命名录音"}
                 </Text>
                 <Text style={styles.itemDate}>
                   {formatDate(s.date)}
-                  {s.phase === "failed" ? " · Failed" : s.phase !== "done" ? ` · ${s.phase}` : ""}
+                  {s.phase === "failed" ? " · 失败" : s.phase && s.phase !== "done" ? ` · ${PHASE_LABELS[s.phase] ?? s.phase}` : ""}
                 </Text>
               </View>
               <ArrowUpRight size={18} color={colors.muted} />
             </TouchableOpacity>
-              <IconButton icon={Trash2} label={`Delete ${s.topic || "Untitled"}`} onPress={handleDelete} />
+              <IconButton icon={Trash2} label={`删除 ${s.topic || "未命名录音"}`} onPress={handleDelete} />
             </View>
           );
         }}

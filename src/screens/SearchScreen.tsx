@@ -34,7 +34,7 @@ export default function SearchScreen() {
 
   const showSkillDetail = useCallback((skill: Skill) => {
     if (Platform.OS === "web") {
-      window.alert(`${skill.name}\n\n${skill.description}\n\n${CATEGORY_LABELS[skill.category] ?? skill.category} · ${skill.sourceSessionIds.length} sessions`);
+      window.alert(`${skill.name}\n\n${skill.description}\n\n${CATEGORY_LABELS[skill.category] ?? skill.category} · 关联 ${skill.sourceSessionIds.length} 个会话`);
       return;
     }
     Alert.alert(
@@ -70,7 +70,7 @@ export default function SearchScreen() {
         ...prev,
         {
           role: "agent",
-          content: e.message ?? "Search failed. Check your API key and network.",
+          content: e.message ?? "提问失败，请检查 API 密钥和网络。",
         },
       ]);
     } finally {
@@ -85,14 +85,14 @@ export default function SearchScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
-      <ScreenHeader title="Ask" />
+      <ScreenHeader title="提问" />
 
       <FlatList
         ref={flatListRef}
         data={messages}
         keyExtractor={(_, i) => String(i)}
         contentContainerStyle={styles.messages}
-        ListEmptyComponent={<View style={styles.empty}><MessagesSquare size={36} strokeWidth={1.3} color={colors.muted} /><Text style={styles.emptyText}>No conversation yet</Text></View>}
+        ListEmptyComponent={<View style={styles.empty}><MessagesSquare size={36} strokeWidth={1.3} color={colors.muted} /><Text style={styles.emptyText}>还没有对话</Text></View>}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
         renderItem={({ item }) => (
           <View
@@ -101,11 +101,11 @@ export default function SearchScreen() {
               item.role === "user" ? styles.userBubble : styles.agentBubble,
             ]}
           >
-            <Text style={styles.speakerLabel}>{item.role === "user" ? "You" : "Answer"}</Text>
+            <Text style={styles.speakerLabel}>{item.role === "user" ? "你" : "回答"}</Text>
             {item.matchedSkillGroup && (
               <View style={styles.skillsSection}>
                 <Text style={styles.skillsTitle}>
-                  Related skills
+                  相关技能
                 </Text>
                 <Text style={styles.skillsGroupLabel}>
                   {item.matchedSkillGroup.group.label}
@@ -136,7 +136,7 @@ export default function SearchScreen() {
             {item.sources && item.sources.length > 0 && (
               <View style={styles.sources}>
                 <Text style={styles.sourcesTitle}>
-                  Sources ({item.sources.length}){item.grounded === false ? " — may contain unverified info" : ""}
+                  来源（{item.sources.length}）{item.grounded === false ? " — 可能包含未经验证的信息" : ""}
                 </Text>
                 {item.sources.slice(0, 3).map((s: string, i: number) => (
                   <Text key={i} style={styles.sourceItem} numberOfLines={2}>
@@ -152,8 +152,8 @@ export default function SearchScreen() {
       <View style={styles.inputBar}>
         <TextInput
           style={styles.input}
-          placeholder="Your question"
-          accessibilityLabel="Question"
+          placeholder="输入你的问题"
+          accessibilityLabel="问题"
           placeholderTextColor={colors.muted}
           value={input}
           onChangeText={setInput}
@@ -163,9 +163,9 @@ export default function SearchScreen() {
         />
         <View style={styles.sendControl}>
           {loading ? (
-            <ActivityIndicator accessibilityLabel="Generating answer" size="small" color={colors.accent} />
+            <ActivityIndicator accessibilityLabel="正在生成回答" size="small" color={colors.accent} />
           ) : (
-            <IconButton icon={Send} label="Send question" onPress={handleSend} disabled={!input.trim()} />
+            <IconButton icon={Send} label="发送问题" onPress={handleSend} disabled={!input.trim()} />
           )}
         </View>
       </View>

@@ -16,6 +16,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import android.os.StatFs
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.io.File
 import java.io.RandomAccessFile
@@ -46,7 +47,12 @@ class DiaryForegroundService : Service() {
     @Volatile
     var serviceActive: Boolean = false
 
+    // 停止请求是抢占式的：即使 ACTION_STOP 没能及时送达，onDestroy 也不会误报 service_destroy
+    @Volatile
+    private var stopRequested: Boolean = false
+
     fun start(context: Context) {
+      stopRequested = false
       val intent = Intent(context, DiaryForegroundService::class.java).setAction(ACTION_START)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         context.startForegroundService(intent)
@@ -56,8 +62,21 @@ class DiaryForegroundService : Service() {
     }
 
     fun stop(context: Context) {
+      if (!serviceActive) {
+        recoverManifest(context.filesDir)
+        return
+      }
+      stopRequested = true
       val intent = Intent(context, DiaryForegroundService::class.java).setAction(ACTION_STOP)
-      context.stopService(intent)
+      try {
+        context.startService(intent)
+      } catch (e: Throwable) {
+        Log.w("DiaryForeground", "ACTION_STOP rejected, fallback to stopService", e)
+        try {
+          context.stopService(Intent(context, DiaryForegroundService::class.java))
+        } catch (_: Throwable) {
+        }
+      }
     }
 
     fun pause(context: Context) {
@@ -84,11 +103,12 @@ class DiaryForegroundService : Service() {
   private val captureStateLock = Object()
   private var finalized = false
   private var stopReason: String? = null
+  private var intentionalStop = false
 
+  private var wakeLock: PowerManager.WakeLock? = null
   private var currentOut: RandomAccessFile? = null
   private var currentSegment: DiaryCurrentSegment? = null
   private var currentPcmBytes: Long = 0
-  private var currentSamples: Long = 0
   private var speechActive = false
   private var silenceSamples = 0
   private var lastProb = 0f
@@ -107,7 +127,9 @@ class DiaryForegroundService : Service() {
   }
 
   override fun onDestroy() {
-    stopCaptureInternal("service_destroy")
+    // 用户主动停止时不应被记录成错误（包括 ACTION_STOP 未送达、只能用 stopService 兜底的情况）
+    stopCaptureInternal(if (intentionalStop || stopRequested) null else "service_destroy")
+    stopRequested = false
     serviceActive = false
     super.onDestroy()
   }
@@ -115,6 +137,8 @@ class DiaryForegroundService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     when (intent?.action) {
       ACTION_STOP -> {
+        intentionalStop = true
+        stopRequested = true
         stopCaptureInternal(null)
         stopSelf()
       }
@@ -196,10 +220,15 @@ class DiaryForegroundService : Service() {
 
     running.set(true)
     paused.set(false)
+    // 保持 CPU 唤醒，避免锁屏/后台时录音线程被挂起
+    val pm = getSystemService(PowerManager::class.java)
+    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DeepRecoder:DiaryCapture").apply {
+      setReferenceCounted(false)
+      acquire(6 * 60 * 60 * 1000L)
+    }
     finalized = false
     stopReason = null
     currentPcmBytes = 0
-    currentSamples = 0
     speechActive = false
     silenceSamples = 0
     captureBaseInstant = Instant.now()
@@ -216,8 +245,14 @@ class DiaryForegroundService : Service() {
   }
 
   private fun captureLoop(vadModelPath: String) {
-    val chunkSamples = 512
-    val shorts = ShortArray(chunkSamples)
+    // VAD 只接受固定 512 样本窗口：read() 可能返回任意不足一帧的数据，
+    // 必须先攒够一帧再送入，否则 VAD 会抛出 RuntimeException 导致误报采集异常。
+    val frameSize = SherpaVad.FRAME_SIZE
+    val readBuffer = ShortArray(frameSize * 2)
+    val frame = ShortArray(frameSize)
+    var frameFill = 0
+    var processedSamples = 0L
+    var chunks = 0L
     val vad = try {
       SherpaVad(vadModelPath)
     } catch (_: Throwable) {
@@ -229,7 +264,6 @@ class DiaryForegroundService : Service() {
 
     try {
       record?.startRecording()
-      var chunks = 0L
       while (running.get()) {
         waitIfPausedOrStopped()
         if (!running.get()) break
@@ -240,7 +274,7 @@ class DiaryForegroundService : Service() {
           break
         }
 
-        val n = record?.read(shorts, 0, shorts.size) ?: -1
+        val n = record?.read(readBuffer, 0, readBuffer.size) ?: -1
         if (n == 0) {
           continue
         }
@@ -251,63 +285,79 @@ class DiaryForegroundService : Service() {
           }
           continue
         }
-        val chunkStartSample = currentSamples
-        currentSamples += n.toLong()
-        chunks += 1
 
-        val chunk = if (n == shorts.size) shorts else shorts.copyOf(n)
-        pushPrebuffer(chunk)
+        var offset = 0
+        while (offset < n) {
+          val take = minOf(frameSize - frameFill, n - offset)
+          System.arraycopy(readBuffer, offset, frame, frameFill, take)
+          frameFill += take
+          offset += take
+          if (frameFill < frameSize) continue
 
-        val score = vad.computeScore(WavIo.shortsToFloats(chunk, chunk.size))
-        lastProb = score
-        val isSpeech = score >= 0.55f
+          val score = vad.computeScore(WavIo.shortsToFloats(frame, frameSize))
+          lastProb = score
+          processFrame(frame, processedSamples, score)
+          processedSamples += frameSize.toLong()
+          frameFill = 0
+          chunks += 1
 
-        if (isSpeech && !speechActive) {
-          val prebufferCount = prebuffer.size
-          val prebufferWithoutCurrent = (prebufferCount - chunk.size).coerceAtLeast(0)
-          beginSegment((chunkStartSample - prebufferWithoutCurrent.toLong()).coerceAtLeast(0L))
-          speechActive = true
-          silenceSamples = 0
-          writePrebufferToCurrent(prebufferWithoutCurrent)
-        }
-
-        if (speechActive) {
-          writeChunkWithMidnightSplit(chunk, chunkStartSample)
-          if (isSpeech) {
-            silenceSamples = 0
-          } else {
-            silenceSamples += n
-            val tailSamples = (DiaryPaths.SAMPLE_RATE * TAIL_MS) / 1000
-            if (silenceSamples >= tailSamples) {
-              synchronized(captureStateLock) {
-                endSegmentLocked()
-              }
-              speechActive = false
-              silenceSamples = 0
-              prebuffer.clear()
-            }
+          if (chunks % 250L == 0L) {
+            DiaryManifestStore.upsertCurrent(filesDir, currentSegment, active = true, paused = paused.get(), error = null)
           }
-
-          val maxSamples = (DiaryPaths.SAMPLE_RATE.toLong() * MAX_SEGMENT_MS.toLong()) / 1000L
-          if (currentPcmBytes / 2 >= maxSamples) {
-            synchronized(captureStateLock) {
-              endSegmentLocked()
-            }
-            speechActive = false
-            silenceSamples = 0
-            prebuffer.clear()
-          }
-        }
-
-        if (chunks % 250L == 0L) {
-          DiaryManifestStore.upsertCurrent(filesDir, currentSegment, active = true, paused = paused.get(), error = null)
         }
       }
-    } catch (_: Throwable) {
-      requestStop("capture_runtime_error")
+    } catch (e: Throwable) {
+      // 主动停止会让 read() 返回不完整数据；此时 running 已为 false，不应当记成运行异常
+      if (running.get()) {
+        Log.e("DiaryForeground", "capture loop failed", e)
+        val detail = "${e.javaClass.simpleName}:${e.message ?: ""}"
+        requestStop("capture_runtime_error:$detail")
+      }
     } finally {
       vad.release()
       finalizeCaptureOnce()
+    }
+  }
+
+  private fun processFrame(frame: ShortArray, frameStartSample: Long, score: Float) {
+    val chunkStartSample = frameStartSample
+    pushPrebuffer(frame)
+
+    val isSpeech = score >= 0.55f
+    if (isSpeech && !speechActive) {
+      val prebufferWithoutCurrent = (prebuffer.size - frame.size).coerceAtLeast(0)
+      beginSegment((chunkStartSample - prebufferWithoutCurrent.toLong()).coerceAtLeast(0L))
+      speechActive = true
+      silenceSamples = 0
+      writePrebufferToCurrent(prebufferWithoutCurrent)
+    }
+
+    if (speechActive) {
+      writeChunkWithMidnightSplit(frame, chunkStartSample)
+      if (isSpeech) {
+        silenceSamples = 0
+      } else {
+        silenceSamples += frame.size
+        val tailSamples = (DiaryPaths.SAMPLE_RATE * TAIL_MS) / 1000
+        if (silenceSamples >= tailSamples) {
+          synchronized(captureStateLock) {
+            endSegmentLocked()
+          }
+          speechActive = false
+          silenceSamples = 0
+          prebuffer.clear()
+        }
+      }
+
+      val maxSamples = (DiaryPaths.SAMPLE_RATE.toLong() * MAX_SEGMENT_MS.toLong()) / 1000L
+      if (currentPcmBytes / 2 >= maxSamples) {
+        synchronized(captureStateLock) {
+          endSegmentLocked()
+        }
+        speechActive = false
+        silenceSamples = 0
+        prebuffer.clear()
+      }
     }
   }
 
@@ -360,6 +410,9 @@ class DiaryForegroundService : Service() {
 
     worker = null
     DiaryManifestStore.clearCurrentAndDeactivate(filesDir, stopReason)
+    wakeLock?.let { if (it.isHeld) it.release() }
+    wakeLock = null
+    if (stopReason != null) Log.w("DiaryForeground", "capture stopped: $stopReason")
     stopForeground(STOP_FOREGROUND_REMOVE)
   }
 

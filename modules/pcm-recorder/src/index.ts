@@ -47,6 +47,11 @@ export interface SpeakerEvidence {
   windows: SpeakerEvidenceWindow[];
 }
 
+export interface HttpResponse {
+  status: number;
+  body: string;
+}
+
 interface PcmRecorderNativeModule {
   hasPermission(): boolean;
   getStatus(): RecordingStatus;
@@ -69,6 +74,10 @@ interface PcmRecorderNativeModule {
   identifySpeaker(filePath: string): Promise<SpeakerEvidence>;
   enrollSpeaker(filePath: string): Promise<void>;
   deleteSpeakerProfile(): Promise<void>;
+
+  httpPostJson(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<HttpResponse>;
+  httpPostMultipart(url: string, headers: Record<string, string>, fields: Record<string, string>,
+    filePath: string, fileName: string, mimeType: string, timeoutMs: number): Promise<HttpResponse>;
 }
 
 const NativeModule = requireNativeModule<PcmRecorderNativeModule>('PcmRecorder');
@@ -95,6 +104,12 @@ export const PcmRecorder = {
   identifySpeaker: (filePath: string) => NativeModule.identifySpeaker(filePath),
   enrollSpeaker: (filePath: string) => NativeModule.enrollSpeaker(filePath),
   deleteSpeakerProfile: () => NativeModule.deleteSpeakerProfile(),
+
+  httpPostJson: (url: string, headers: Record<string, string>, body: string, timeoutMs = 30000) =>
+    NativeModule.httpPostJson(url, headers, body, timeoutMs),
+  httpPostMultipart: (url: string, headers: Record<string, string>, fields: Record<string, string>,
+    filePath: string, fileName: string, mimeType: string, timeoutMs = 110000) =>
+    NativeModule.httpPostMultipart(url, headers, fields, filePath, fileName, mimeType, timeoutMs),
 };
 
 export default PcmRecorder;

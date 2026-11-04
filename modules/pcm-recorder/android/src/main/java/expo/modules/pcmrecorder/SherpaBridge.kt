@@ -33,6 +33,11 @@ internal data class SpeakerEvidenceResult(
 )
 
 internal class SherpaVad(modelPath: String) {
+  companion object {
+    // Silero VAD 只接受固定窗口长度的输入，不足一帧的数据不能直接送入
+    const val FRAME_SIZE = 512
+  }
+
   private val vad = Vad(
     assetManager = null,
     config = VadModelConfig(
@@ -41,7 +46,7 @@ internal class SherpaVad(modelPath: String) {
         threshold = 0.5f,
         minSilenceDuration = 0.25f,
         minSpeechDuration = 0.2f,
-        windowSize = 512,
+        windowSize = FRAME_SIZE,
         maxSpeechDuration = 10.0f,
       ),
       sampleRate = DiaryPaths.SAMPLE_RATE,
@@ -65,6 +70,8 @@ internal object SherpaSpeaker {
   private const val ENROLL_MIN_CONSISTENCY = 0.80
   private const val WINDOW_MS = 3000
   private const val HOP_MS = 3000
+  // 识别阶段最多计算 12 个窗口，否则长录音的声纹识别会耗时几十秒
+  private const val MAX_IDENTIFY_WINDOWS = 12
 
   fun hasProfile(context: Context): Boolean {
     val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -82,22 +89,18 @@ internal object SherpaSpeaker {
     require(durationSec <= 30.0) { "enroll_too_long" }
 
     val extractor = buildExtractor(modelPath)
-    try {
-      val windows = computeWindowEmbeddings(extractor, samples, WINDOW_MS, HOP_MS)
-      require(windows.size >= 4) { "enroll_insufficient_windows" }
+    val windows = computeWindowEmbeddings(extractor, samples, WINDOW_MS, HOP_MS)
+    require(windows.size >= 4) { "enroll_insufficient_windows" }
 
-      val mean = averageEmbedding(windows)
-      val consistencyValues = windows.map { cosineSimilarity(it, mean) }
-      val avgConsistency = consistencyValues.average()
-      val minConsistency = consistencyValues.minOrNull() ?: 0.0
-      require(avgConsistency >= ENROLL_MIN_CONSISTENCY && minConsistency >= ENROLL_MIN_CONSISTENCY) {
-        "enroll_not_clean_solo_speech"
-      }
-
-      saveProfile(context, mean)
-    } finally {
-      extractor.release()
+    val mean = averageEmbedding(windows)
+    val consistencyValues = windows.map { cosineSimilarity(it, mean) }
+    val avgConsistency = consistencyValues.average()
+    val minConsistency = consistencyValues.minOrNull() ?: 0.0
+    require(avgConsistency >= ENROLL_MIN_CONSISTENCY && minConsistency >= ENROLL_MIN_CONSISTENCY) {
+      "enroll_not_clean_solo_speech"
     }
+
+    saveProfile(context, mean)
   }
 
   fun identify(context: Context, modelPath: String, wavPath: String): SpeakerEvidenceResult {
@@ -107,12 +110,16 @@ internal object SherpaSpeaker {
       return SpeakerEvidenceResult("unknown", null, profile.revision, emptyList())
     }
 
+    val loadStarted = android.os.SystemClock.elapsedRealtime()
     val extractor = buildExtractor(modelPath)
-    val windows = try {
-      computeWindowEmbeddingsWithOffsets(extractor, samples, WINDOW_MS, HOP_MS)
-    } finally {
-      extractor.release()
-    }
+    val loadMs = android.os.SystemClock.elapsedRealtime() - loadStarted
+    val computeStarted = android.os.SystemClock.elapsedRealtime()
+    // 长录音逐窗口计算会非常慢（5 分钟录音需要上百个窗口），采样固定数量窗口即可
+    val windows = computeSampledWindowEmbeddings(extractor, samples)
+    android.util.Log.d(
+      "DiaryForeground",
+      "identify windows=${windows.size} audio=${samples.size / DiaryPaths.SAMPLE_RATE}s load=${loadMs}ms compute=${android.os.SystemClock.elapsedRealtime() - computeStarted}ms",
+    )
 
     val evidence = windows.mapNotNull { pair ->
       val emb = pair.second
@@ -136,10 +143,12 @@ internal object SherpaSpeaker {
 
     val usable = evidence.filter { it.similarity != null }
     val matched = usable.filter { it.speaker == "matched" }
-    val avg = usable.mapNotNull { it.similarity }.averageOrNull()
+    val similarities = usable.mapNotNull { it.similarity }
+    val avg = if (similarities.isEmpty()) null else similarities.average()
 
     val windowSamples = (DiaryPaths.SAMPLE_RATE * WINDOW_MS) / 1000
-    val coveredSamples = windows.size * windowSamples
+    // 采样窗口不连续，覆盖率按最后一个窗口的结束时间计算
+    val coveredSamples = ((windows.last().first.second * DiaryPaths.SAMPLE_RATE) / 1000)
     val remainderSamples = (samples.size - coveredSamples).coerceAtLeast(0)
     val remainderOkay = remainderSamples <= (windowSamples / 2)
     val enoughSpeech = usable.size >= 3
@@ -150,8 +159,16 @@ internal object SherpaSpeaker {
     return SpeakerEvidenceResult(speaker, avg, profile.revision, evidence)
   }
 
+  @Synchronized
   private fun buildExtractor(modelPath: String): SpeakerExtractor {
-    return SpeakerExtractor(modelPath)
+    val existing = cachedExtractor
+    if (existing != null && cachedModelPath == modelPath) return existing
+    existing?.release()
+    // 复用同一个声纹模型实例：每个片段都重新加载模型会显著拖慢队列处理
+    val created = SpeakerExtractor(modelPath)
+    cachedExtractor = created
+    cachedModelPath = modelPath
+    return created
   }
 
   private fun computeWindowEmbeddings(
@@ -185,6 +202,36 @@ internal object SherpaSpeaker {
       offset += hop
     }
     return out
+  }
+
+  // 在整段录音上均匀采样固定数量的窗口，兼顾长录音的识别速度与证据覆盖
+  private fun computeSampledWindowEmbeddings(
+    extractor: SpeakerExtractor,
+    samples: FloatArray,
+  ): List<Pair<Pair<Long, Long>, FloatArray>> {
+    val window = (DiaryPaths.SAMPLE_RATE * WINDOW_MS) / 1000
+    val hop = (DiaryPaths.SAMPLE_RATE * HOP_MS) / 1000
+    if (samples.size < window) return emptyList()
+
+    val total = ((samples.size - window) / hop) + 1
+    val step = maxOf(1, (total + MAX_IDENTIFY_WINDOWS - 1) / MAX_IDENTIFY_WINDOWS)
+    val offsets = mutableListOf<Int>()
+    var index = 0
+    while (index < total) {
+      offsets.add(index * hop)
+      index += step
+    }
+    val lastOffset = (total - 1) * hop
+    if (offsets.last() != lastOffset) offsets.add(lastOffset)
+
+    return offsets.map { offset ->
+      val chunk = samples.copyOfRange(offset, offset + window)
+      val emb = extractor.embedding(chunk)
+      require(emb.isNotEmpty() && emb.all { it.isFinite() }) { "speaker_embedding_invalid" }
+      val startMs = (offset * 1000L) / DiaryPaths.SAMPLE_RATE
+      val endMs = ((offset + window) * 1000L) / DiaryPaths.SAMPLE_RATE
+      (startMs to endMs) to emb
+    }
   }
 
   private fun averageEmbedding(embeddings: List<FloatArray>): FloatArray {
@@ -285,6 +332,9 @@ internal object SherpaSpeaker {
   }
 
   private data class LoadedProfile(val revision: String, val embedding: FloatArray)
+
+  private var cachedExtractor: SpeakerExtractor? = null
+  private var cachedModelPath: String? = null
 }
 
 private class SpeakerExtractor(modelPath: String) {
@@ -292,12 +342,13 @@ private class SpeakerExtractor(modelPath: String) {
     assetManager = null,
     config = SpeakerEmbeddingExtractorConfig(
       model = modelPath,
-      numThreads = 1,
+      numThreads = 2,
       debug = false,
       provider = "cpu",
     ),
   )
 
+  @Synchronized
   fun embedding(samples: FloatArray): FloatArray {
     val stream = extractor.createStream()
     return try {

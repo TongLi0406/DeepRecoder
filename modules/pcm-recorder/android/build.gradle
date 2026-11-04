@@ -9,12 +9,6 @@ if (!sherpaAar.exists()) {
   throw new GradleException("Missing required dependency: modules/pcm-recorder/android/libs/sherpa-onnx-1.13.7.aar. Run node modules/pcm-recorder/android/scripts/setup-native-diary.js first.")
 }
 
-repositories {
-  flatDir {
-    dirs "$projectDir/libs"
-  }
-}
-
 def safeExtGet(prop, fallback) {
   rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
 }
@@ -49,5 +43,6 @@ dependencies {
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
   coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
 
-  implementation(name: 'sherpa-onnx-1.13.7', ext: 'aar')
+  implementation(files(sherpaAar))
+  implementation "com.squareup.okhttp3:okhttp:4.9.2"
 }

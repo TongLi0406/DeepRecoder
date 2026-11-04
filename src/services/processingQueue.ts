@@ -87,7 +87,7 @@ async function runPipeline(sessionId: string): Promise<void> {
     }
     session = await getSessionById(sessionId);
     checkAbort(signal);
-    if (!session?.transcript) throw new Error("No transcript available");
+    if (!session?.transcript) throw new Error("没有可用的转写文本");
     if (!session.summary) {
       await updateSessionPhase(sessionId, "summarizing");
       notify();
@@ -100,7 +100,7 @@ async function runPipeline(sessionId: string): Promise<void> {
       await updateSessionPartialSummary(sessionId, "");
       session = await getSessionById(sessionId);
     }
-    if (!session?.summary || !session.transcript) throw new Error("Saved summary unavailable");
+    if (!session?.summary || !session.transcript) throw new Error("已保存的总结不可用");
     const summaryInput = JSON.stringify(session.summary);
     if (!await getProcessingCheckpoint(sessionId, "index-summary-v2", summaryInput)) {
       await updateSessionPhase(sessionId, "indexing");
