@@ -12,7 +12,9 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.os.StatFs
@@ -36,7 +38,8 @@ class DiaryForegroundService : Service() {
     private const val ACTION_RESUME = "expo.modules.pcmrecorder.action.RESUME_DIARY"
 
     private const val DISK_FLOOR_BYTES = 500L * 1024L * 1024L
-    private const val DIARY_CAP_BYTES = 500L * 1024L * 1024L
+    // 全天候采集的音频会持续增长，给 20GB 上限；真正的磁盘安全线仍由 DISK_FLOOR_BYTES 兜底
+    private const val DIARY_CAP_BYTES = 20L * 1024L * 1024L * 1024L
     private const val LOW_BATTERY_PERCENT = 15
 
     private const val PREBUFFER_MS = 500
@@ -98,6 +101,8 @@ class DiaryForegroundService : Service() {
   private val running = AtomicBoolean(false)
   private val paused = AtomicBoolean(false)
   private val stopping = AtomicBoolean(false)
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private var tickRunnable: Runnable? = null
   private val finalizeLock = Any()
   private val pauseLock = Object()
   private val captureStateLock = Object()
@@ -116,6 +121,7 @@ class DiaryForegroundService : Service() {
   private var captureBaseInstant: Instant? = null
   private var captureZoneId: ZoneId = ZoneId.systemDefault()
   private var diaryBytesEstimate: Long = 0L
+  private var safetyStopReason: String = "capture_safety_stop"
   private var lastSafetyCheckMs: Long = 0L
 
   override fun onBind(intent: Intent?): IBinder? = null
@@ -242,6 +248,19 @@ class DiaryForegroundService : Service() {
     }, "DiaryForegroundCapture").apply {
       start()
     }
+
+    // 采集期间每 5 分钟兜底通知 JS；片段结束事件也会触发，正常情况下会即时处理
+    val tick = object : Runnable {
+      override fun run() {
+        if (!running.get()) return
+        PcmRecorderModule.notifyDiaryTick()
+        mainHandler.postDelayed(this, 5 * 60_000L)
+      }
+    }
+    tickRunnable = tick
+    // 启动采集后先立刻补一次，把已有积压处理掉，再进入 5 分钟兜底节奏
+    mainHandler.postDelayed({ PcmRecorderModule.notifyDiaryTick() }, 10_000L)
+    mainHandler.postDelayed(tick, 5 * 60_000L)
   }
 
   private fun captureLoop(vadModelPath: String) {
@@ -269,7 +288,7 @@ class DiaryForegroundService : Service() {
         if (!running.get()) break
 
         if (!isCaptureSafeDecimated()) {
-          requestStop("capture_safety_stop")
+          requestStop(safetyStopReason)
           stopSelf()
           break
         }
@@ -408,6 +427,8 @@ class DiaryForegroundService : Service() {
       }
     }
 
+    tickRunnable?.let { mainHandler.removeCallbacks(it) }
+    tickRunnable = null
     worker = null
     DiaryManifestStore.clearCurrentAndDeactivate(filesDir, stopReason)
     wakeLock?.let { if (it.isHeld) it.release() }
@@ -486,6 +507,7 @@ class DiaryForegroundService : Service() {
       durationMs = durationMs,
     )
     DiaryManifestStore.appendSegment(filesDir, finalSegment)
+    mainHandler.post { PcmRecorderModule.notifyDiarySegment(finalSegment.id) }
     diaryBytesEstimate += file.length().coerceAtLeast(0L)
     currentPcmBytes = 0
   }
@@ -539,17 +561,20 @@ class DiaryForegroundService : Service() {
 
     val stat = StatFs(filesDir.absolutePath)
     if (stat.availableBytes < DISK_FLOOR_BYTES) {
+      safetyStopReason = "disk_below_500mb"
       DiaryManifestStore.clearCurrentAndDeactivate(filesDir, "disk_below_500mb")
       return false
     }
 
     if (diaryBytesEstimate > DIARY_CAP_BYTES) {
+      safetyStopReason = "diary_cap_exceeded"
       DiaryManifestStore.clearCurrentAndDeactivate(filesDir, "diary_cap_exceeded")
       return false
     }
 
     val battery = batteryStatus()
     if (battery.first >= 0 && battery.first <= LOW_BATTERY_PERCENT && !battery.second) {
+      safetyStopReason = "battery_below_15"
       DiaryManifestStore.clearCurrentAndDeactivate(filesDir, "battery_below_15")
       return false
     }
@@ -557,6 +582,7 @@ class DiaryForegroundService : Service() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       val pm = getSystemService(PowerManager::class.java)
       if (pm.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) {
+        safetyStopReason = "thermal_severe"
         DiaryManifestStore.clearCurrentAndDeactivate(filesDir, "thermal_severe")
         return false
       }

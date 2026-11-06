@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Platform,
   Pressable,
   ScrollView,
@@ -18,6 +19,7 @@ import {
   deleteVoiceProfile,
   finishVoiceEnrollmentCapture,
   generateDailyDiary,
+  getDiaryQueueStats,
   getDiaryRuntimeStatus,
   getRetentionPlan,
   handleDiaryForeground,
@@ -66,7 +68,7 @@ const NATIVE_ERROR_LABELS: Record<string, string> = {
   audio_record_not_initialized: "麦克风不可用",
   vad_init_failed: "语音检测模型初始化失败",
   disk_below_500mb: "存储空间低于 500MB，采集已停止",
-  diary_cap_exceeded: "日记音频达到 500MB 上限，采集已停止",
+  diary_cap_exceeded: "日记音频达到存储上限，采集已停止",
   battery_below_15: "电量低于 15% 且未充电，采集已停止",
   thermal_severe: "设备温度过高，采集已停止",
   ordinary_recording_active: "普通录音进行中，无法采集日记",
@@ -118,6 +120,14 @@ const IDENTITY_LABELS: Record<string, string> = {
 
 function stateLabel(state: string): string {
   return DIARY_STATE_LABELS[state] ?? state;
+}
+
+function hasDiaryContent(day: DailyDiary): boolean {
+  return !!day.content.summaryNeutral.trim()
+    || day.content.timeline.length > 0
+    || day.content.topics.length > 0
+    || day.content.commitments.length > 0
+    || day.content.unresolved.length > 0;
 }
 
 function ActionButton(props: { title: string; onPress: () => void | Promise<void>; disabled?: boolean; danger?: boolean }) {
@@ -221,14 +231,35 @@ export default function DiaryScreen({ settingsOnly = false }: { settingsOnly?: b
     refreshAll().catch(error => setMessage(error?.message ?? "加载日记状态失败"));
   }, []));
 
+  // 回到前台时主动刷新一次：后台定时触发的处理不会通知本页，避免界面停在旧计数
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", state => {
+      if (state === "active") {
+        refreshAll().catch(() => {});
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
   // 后台处理期间轮询状态，实时更新队列计数
   useEffect(() => {
     if (!status?.processingActive && !draining) return;
     const id = setInterval(() => {
       refreshAll().catch(() => {});
-    }, 2000);
+    }, 5000);
     return () => clearInterval(id);
   }, [status?.processingActive, draining]);
+
+  // 采集或后台处理期间单独轮询待处理数：轻量查询不会被原生转写请求排队拖慢
+  useEffect(() => {
+    if (!status?.native.active && !status?.processingActive && !draining) return;
+    const id = setInterval(() => {
+      getDiaryQueueStats()
+        .then(queue => setStatus(prev => (prev ? { ...prev, queue } : prev)))
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(id);
+  }, [status?.native.active, status?.processingActive, draining]);
 
   // 日记生成期间轮询，避免界面一直停留在“生成中”
   const anyGenerating = days.some(item => item.state === "generating");
@@ -517,7 +548,7 @@ export default function DiaryScreen({ settingsOnly = false }: { settingsOnly?: b
             />
           </View>
         ) : null}
-        {selectedDay?.state === "ready" ? (
+        {selectedDay && (selectedDay.state === "ready" || hasDiaryContent(selectedDay)) ? (
           <View style={{ gap: 24, paddingVertical: 12 }}>
             <Text style={[styles.journal, { fontSize: 24, lineHeight: 34 }]}>{selectedDay.content.summaryNeutral}</Text>
             {[

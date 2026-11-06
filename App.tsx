@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { ActivityIndicator, AppState, View } from "react-native";
+import { ActivityIndicator, AppState, Platform, View } from "react-native";
 import { useFonts } from "expo-font";
 import { StatusBar } from "expo-status-bar";
 import { NavigationContainer } from "@react-navigation/native";
@@ -92,6 +92,42 @@ export default function App() {
     return () => {
       appStateSub.remove();
       clearInterval(maintenanceId);
+    };
+  }, []);
+
+  // 采集期间原生前台服务每 60 秒发一次事件，驱动转写队列，避免等停止采集后才批量处理
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+    (async () => {
+      try {
+        const { PcmRecorder } = await import("./modules/pcm-recorder/src");
+        if (cancelled) return;
+        // 片段结束事件可能很密集，用 5 秒时间窗节流（不依赖 setTimeout，后台也能触发）
+        let lastTriggeredAt = 0;
+        const scheduleProcessing = () => {
+          const now = Date.now();
+          if (now - lastTriggeredAt < 5000) return;
+          lastTriggeredAt = now;
+          handleDiaryForeground().catch(() => {});
+        };
+        const onTick = PcmRecorder.addListener("onDiaryTick", () => {
+          console.error("[DiaryTick] received");
+          scheduleProcessing();
+        });
+        const onSegment = PcmRecorder.addListener("onDiarySegment", scheduleProcessing);
+        cleanup = () => {
+          onTick.remove();
+          onSegment.remove();
+        };
+      } catch {
+        // 原生事件不可用时仍然依赖前台定时器处理
+      }
+    })();
+    return () => {
+      cancelled = true;
+      cleanup?.();
     };
   }, []);
 

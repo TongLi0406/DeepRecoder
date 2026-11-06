@@ -39,8 +39,26 @@ class PcmRecorderModule : Module() {
     )
 
     private val ordinaryActive = AtomicBoolean(false)
+    private var moduleRef: java.lang.ref.WeakReference<PcmRecorderModule>? = null
 
     fun ordinaryRecordingActive(): Boolean = ordinaryActive.get()
+
+    // 采集期间主动通知 JS：前台服务仍在运行，即使 App 在后台也能触发转写处理
+    fun notifyDiaryTick() {
+      val module = moduleRef?.get() ?: return
+      try {
+        module.sendEvent("onDiaryTick", emptyMap<String, Any?>())
+      } catch (_: Throwable) {
+      }
+    }
+
+    fun notifyDiarySegment(id: String) {
+      val module = moduleRef?.get() ?: return
+      try {
+        module.sendEvent("onDiarySegment", mapOf("id" to id))
+      } catch (_: Throwable) {
+      }
+    }
 
     fun resolveDiaryModelPaths(filesDir: File): DiaryModelPaths {
       val modelDir = DiaryPaths.modelRoot(filesDir)
@@ -69,9 +87,14 @@ class PcmRecorderModule : Module() {
 
     Name("PcmRecorder")
 
-    Events("onRecordingProgress", "onRecordingStopped", "onRecordingError")
+    Events("onRecordingProgress", "onRecordingStopped", "onRecordingError", "onDiaryTick", "onDiarySegment")
 
-    OnDestroy { forceCleanup() }
+    OnCreate { moduleRef = java.lang.ref.WeakReference(this@PcmRecorderModule) }
+
+    OnDestroy {
+      moduleRef = null
+      forceCleanup()
+    }
 
     Function("hasPermission") {
       val context = appContext.reactContext
@@ -340,6 +363,30 @@ class PcmRecorderModule : Module() {
         DiaryManifestStore.recover(context.filesDir).segments
       }
       segments.map {
+        mapOf(
+          "id" to it.id,
+          "filePath" to it.filePath,
+          "startTime" to it.startTime,
+          "endTime" to it.endTime,
+          "localDate" to it.localDate,
+          "utcOffsetMinutes" to it.utcOffsetMinutes,
+          "durationMs" to it.durationMs,
+        )
+      }
+    }
+
+    // 一次性把所有片段转成 JS 对象会在几千条时触发 OOM（进程被 abort），必须分页拉取
+    AsyncFunction("listDiarySegmentsPage") { offset: Int, limit: Int ->
+      val context = appContext.reactContext ?: throw CodedException("React context not available")
+      val segments = if (DiaryForegroundService.serviceActive) {
+        DiaryManifestStore.load(context.filesDir).segments
+      } else {
+        DiaryManifestStore.recover(context.filesDir).segments
+      }
+      val safeLimit = limit.coerceIn(1, 1000)
+      val from = offset.coerceIn(0, segments.size)
+      val to = minOf(segments.size, from + safeLimit)
+      segments.subList(from, to).map {
         mapOf(
           "id" to it.id,
           "filePath" to it.filePath,

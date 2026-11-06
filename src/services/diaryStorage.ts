@@ -276,7 +276,24 @@ export async function setDiaryRetentionDays(days: DiaryRetentionDays): Promise<v
   await db.runAsync("INSERT OR REPLACE INTO diary_settings (key, value) VALUES ('retention_days', ?)", String(days));
 }
 
-export async function importNativeDiarySegments(segments: DiaryNativeSegment[]): Promise<{ inserted: number; updated: number; unchanged: number }> {
+// 分页导入时复用同一份已有记录缓存，避免每一页都全表扫描
+export type NativeSegmentImportCache = Map<string, any>;
+
+export async function createNativeSegmentImportCache(): Promise<NativeSegmentImportCache> {
+  const cache: NativeSegmentImportCache = new Map();
+  if (Platform.OS === "web") return cache;
+  const db = await getNativeDb();
+  const rows = await db.getAllAsync(
+    "SELECT id, file_path, start_time, end_time, local_date, utc_offset_minutes, duration_ms FROM diary_segments",
+  );
+  for (const row of rows) cache.set(row.id, row);
+  return cache;
+}
+
+export async function importNativeDiarySegments(
+  segments: DiaryNativeSegment[],
+  cache?: NativeSegmentImportCache,
+): Promise<{ inserted: number; updated: number; unchanged: number }> {
   let inserted = 0;
   let updated = 0;
   let unchanged = 0;
@@ -303,15 +320,61 @@ export async function importNativeDiarySegments(segments: DiaryNativeSegment[]):
   }
 
   const db = await getNativeDb();
-  for (const segment of segments) {
-    const found = await db.getFirstAsync("SELECT * FROM diary_segments WHERE id = ?", segment.id);
-    if (!found) {
-      inserted += 1;
+  // 一次读出已有记录，避免对每个片段做一次 SELECT（几千条时会非常慢）
+  const existing = cache ?? new Map<string, any>();
+  if (!cache) {
+    const existingRows = await db.getAllAsync(
+      "SELECT id, file_path, start_time, end_time, local_date, utc_offset_minutes, duration_ms FROM diary_segments",
+    );
+    for (const row of existingRows) existing.set(row.id, row);
+  }
+
+  await db.withTransactionAsync(async () => {
+    for (const segment of segments) {
+      const found = existing.get(segment.id);
+      if (!found) {
+        inserted += 1;
+        await db.runAsync(
+          `INSERT INTO diary_segments
+          (id, file_path, start_time, end_time, local_date, utc_offset_minutes, duration_ms, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          segment.id,
+          segment.filePath,
+          segment.startTime,
+          segment.endTime,
+          segment.localDate,
+          segment.utcOffsetMinutes,
+          segment.durationMs,
+          nowIso(),
+        );
+        existing.set(segment.id, {
+          id: segment.id,
+          file_path: segment.filePath,
+          start_time: segment.startTime,
+          end_time: segment.endTime,
+          local_date: segment.localDate,
+          utc_offset_minutes: segment.utcOffsetMinutes,
+          duration_ms: segment.durationMs,
+        });
+        continue;
+      }
+      const changed = found.file_path !== segment.filePath ||
+        found.start_time !== segment.startTime ||
+        found.end_time !== segment.endTime ||
+        found.local_date !== segment.localDate ||
+        Number(found.utc_offset_minutes) !== segment.utcOffsetMinutes ||
+        Number(found.duration_ms) !== segment.durationMs;
+
+      if (!changed) {
+        unchanged += 1;
+        continue;
+      }
+
+      updated += 1;
       await db.runAsync(
-        `INSERT INTO diary_segments
-        (id, file_path, start_time, end_time, local_date, utc_offset_minutes, duration_ms, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        segment.id,
+        `UPDATE diary_segments
+        SET file_path = ?, start_time = ?, end_time = ?, local_date = ?, utc_offset_minutes = ?, duration_ms = ?, updated_at = ?
+        WHERE id = ?`,
         segment.filePath,
         segment.startTime,
         segment.endTime,
@@ -319,36 +382,19 @@ export async function importNativeDiarySegments(segments: DiaryNativeSegment[]):
         segment.utcOffsetMinutes,
         segment.durationMs,
         nowIso(),
+        segment.id,
       );
-      continue;
+      existing.set(segment.id, {
+        id: segment.id,
+        file_path: segment.filePath,
+        start_time: segment.startTime,
+        end_time: segment.endTime,
+        local_date: segment.localDate,
+        utc_offset_minutes: segment.utcOffsetMinutes,
+        duration_ms: segment.durationMs,
+      });
     }
-    const changed = found.file_path !== segment.filePath ||
-      found.start_time !== segment.startTime ||
-      found.end_time !== segment.endTime ||
-      found.local_date !== segment.localDate ||
-      Number(found.utc_offset_minutes) !== segment.utcOffsetMinutes ||
-      Number(found.duration_ms) !== segment.durationMs;
-
-    if (!changed) {
-      unchanged += 1;
-      continue;
-    }
-
-    updated += 1;
-    await db.runAsync(
-      `UPDATE diary_segments
-      SET file_path = ?, start_time = ?, end_time = ?, local_date = ?, utc_offset_minutes = ?, duration_ms = ?, updated_at = ?
-      WHERE id = ?`,
-      segment.filePath,
-      segment.startTime,
-      segment.endTime,
-      segment.localDate,
-      segment.utcOffsetMinutes,
-      segment.durationMs,
-      nowIso(),
-      segment.id,
-    );
-  }
+  });
 
   return { inserted, updated, unchanged };
 }
@@ -371,6 +417,40 @@ export async function listAllDiarySegments(): Promise<DiarySegment[]> {
   const db = await getNativeDb();
   const rows = await db.getAllAsync("SELECT * FROM diary_segments ORDER BY start_time ASC");
   return rows.map(rowToSegment);
+}
+
+// 失败片段只需要少量字段；SELECT * 会把所有转写与笔记一起读进 JS，几千条时内存压力很大
+export type FailedDiarySegmentRef = {
+  id: string;
+  filePath: string;
+  lastError: string;
+  retryCount: number;
+};
+
+export async function listDiarySegmentIds(): Promise<string[]> {
+  if (Platform.OS === "web") return Array.from(memory.segments.keys());
+  const db = await getNativeDb();
+  const rows = await db.getAllAsync("SELECT id FROM diary_segments");
+  return rows.map((row: any) => String(row.id));
+}
+
+export async function listFailedDiarySegments(maxRetryCount = Number.MAX_SAFE_INTEGER): Promise<FailedDiarySegmentRef[]> {
+  if (Platform.OS === "web") {
+    return Array.from(memory.segments.values())
+      .filter(item => item.state === "failed" && item.retryCount < maxRetryCount)
+      .map(item => ({ id: item.id, filePath: item.filePath, lastError: item.lastError, retryCount: item.retryCount }));
+  }
+  const db = await getNativeDb();
+  const rows = await db.getAllAsync(
+    "SELECT id, file_path, last_error, retry_count FROM diary_segments WHERE state = 'failed' AND retry_count < ? ORDER BY start_time ASC",
+    maxRetryCount,
+  );
+  return rows.map((row: any) => ({
+    id: row.id,
+    filePath: row.file_path ?? "",
+    lastError: row.last_error ?? "",
+    retryCount: Number(row.retry_count ?? 0),
+  }));
 }
 
 export async function listPendingDiarySegments(limit = 10): Promise<DiarySegment[]> {

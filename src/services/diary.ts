@@ -15,10 +15,12 @@ import {
   getDiarySegment,
   getDiarySettings,
   importNativeDiarySegments,
+  createNativeSegmentImportCache,
   initDiaryStorage,
   listDailyDiaryEntries,
-  listAllDiarySegments,
+  listDiarySegmentIds,
   listDiarySegmentsByDate,
+  listFailedDiarySegments,
   listPendingDiarySegments,
   markDailyDiaryFailed,
   markDayDirty,
@@ -57,6 +59,7 @@ type NativeModule = {
   pauseDiary(): Promise<void>;
   resumeDiary(): Promise<void>;
   listDiarySegments(): Promise<DiaryNativeSegment[]>;
+  listDiarySegmentsPage(offset: number, limit: number): Promise<DiaryNativeSegment[]>;
   deleteDiarySegment(id: string): Promise<void>;
   identifySpeaker(path: string): Promise<{ speaker: "matched" | "unknown"; similarity: number | null; profileRevision: string | null; windows: DiarySpeakerWindow[] }>;
   enrollSpeaker(path: string): Promise<void>;
@@ -79,6 +82,7 @@ Rules:
 6) Never invent source IDs.
 7) Never use first-person pronouns (I, we, my, our, 我, 我们); refer to speakers neutrally.
 8) Write every human-readable field in Simplified Chinese, even if the notes are in another language. Translate facts into Chinese; keep proper nouns (names, places, titles, product names) in their original form.
+9) Keep the JSON compact: at most 6 timeline entries, 6 topics, 4 commitments and 4 unresolved items; keep each text field under 80 Chinese characters.
 
 Return strict JSON with:
 {
@@ -90,8 +94,28 @@ Return strict JSON with:
   "caveat": "来源仅供参考，不构成证据。"
 }`;
 
-let processingActive = false;
-let processingAbort: AbortController | null = null;
+type DiaryQueueRun = {
+  id: number;
+  abort: AbortController;
+  startedAt: number;
+  lastActivityAt: number;
+  inFlight: number;
+};
+
+// 单个片段最长处理时间：上传 110s + 笔记归并 90s + 余量
+const SEGMENT_TIMEOUT_MS = 4 * 60_000;
+// 整条队列超过该时间没有任何片段进展，视为卡死，允许下一次触发接管
+const STALE_RUN_MS = 6 * 60_000;
+// 短转写直接作为笔记，省掉一次模型调用（长转写仍然归并压缩）
+const DIRECT_NOTES_MAX_BYTES = 2000;
+
+// 远端账户余额/鉴权失败时暂停队列，避免把几千条片段的重试次数白白耗光
+const QUOTA_COOLDOWN_MS = 10 * 60_000;
+const QUOTA_ERROR_RE = /HTTP 402|HTTP 401|payment required|insufficient_quota|余额|额度|欠费/i;
+let quotaBlockedUntil = 0;
+
+let queueRun: DiaryQueueRun | null = null;
+let queueRunCounter = 0;
 let enrollmentActive = false;
 let processingPromise: Promise<{ processed: number; failed: number; deleted: number; skipped: boolean }> | null = null;
 const generatingControllers = new Map<string, AbortController>();
@@ -176,7 +200,7 @@ function isMeaninglessTranscript(text: string): boolean {
   return (text.replace(NOISE_TAG_RE, "").match(LETTER_OR_NUMBER_RE)?.length ?? 0) < 2;
 }
 
-async function deleteMeaninglessSegment(segment: DiarySegment): Promise<void> {
+async function deleteMeaninglessSegment(segment: { id: string; filePath: string }): Promise<void> {
   await clearSegmentCheckpoints(segment.id, !!segment.filePath);
   const native = await getNative();
   if (native) {
@@ -232,7 +256,7 @@ async function waitForDiaryIdle(): Promise<void> {
 }
 
 async function cancelAndDrainDiaryWorkers(): Promise<void> {
-  processingAbort?.abort();
+  queueRun?.abort.abort();
   for (const controller of generatingControllers.values()) {
     controller.abort();
   }
@@ -331,6 +355,24 @@ function dropOutOfScopeMarkers(text: string, allowedIds: string[]): string {
   return text.replace(/\[\[SRC:([A-Za-z0-9._-]+)\]\]/g, (match, id) => (allowed.has(id) ? match : ""));
 }
 
+// 按 UTF-8 字节数截断，优先在换行或句号处收尾，保证单个分块不会超预算
+function truncateToBytes(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  if (textBytes(text) <= maxBytes) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    if (textBytes(text.slice(0, mid)) <= maxBytes) lo = mid;
+    else hi = mid - 1;
+  }
+  let cut = lo;
+  const lastBreak = Math.max(text.lastIndexOf("\n", cut), text.lastIndexOf("。", cut));
+  if (lastBreak > cut / 2) cut = lastBreak + 1;
+  // 截断可能把末尾的来源标记切成半截，清掉不完整的标记
+  return text.slice(0, cut).replace(/\[\[SRC:[^\]]*$/g, "").trim();
+}
+
 function assertSourceSubsetOrThrow(output: string, allowedSourceIds: string[], context: string): string[] {
   const allowed = new Set(allowedSourceIds);
   const retained = extractSourceMarkers(output);
@@ -346,7 +388,7 @@ function assertSourceSubsetOrThrow(output: string, allowedSourceIds: string[], c
 }
 
 function buildDiaryBudgets(localDate: string, contextLimit: number): DiaryBudgets {
-  const finalOutputTokens = 4096;
+  const finalOutputTokens = 8192;
   const finalUserPrefix = `Local date: ${localDate}\nSummarize strictly from notes with [[SRC:*]] evidence.\n\n`;
   const protocolReserve = 1024;
   const available = contextLimit - textBytes(DAILY_SYSTEM) - textBytes(finalUserPrefix) - finalOutputTokens - protocolReserve;
@@ -355,8 +397,8 @@ function buildDiaryBudgets(localDate: string, contextLimit: number): DiaryBudget
   if (notesBudget < 128 || contextLimit < 8192) {
     throw new Error(`Model context ${contextLimit} is insufficient for minimum diary generation budget`);
   }
-  // 归并输入接近 6000 字节，输出上限必须足够大，否则会被 finish_reason=length 截断
-  const reduceOutputTokens = 4096;
+  // 归并输入可能接近 6000 字节，输出上限必须足够大，否则会被 finish_reason=length 截断
+  const reduceOutputTokens = 8192;
   return {
     notesBudget,
     reduceOutputTokens,
@@ -496,10 +538,11 @@ async function reduceSingleSourceBlock(
     async chunk => {
       checkAbort(signal);
       const next = await callLLM(REDUCE_SYSTEM, chunk, undefined, reduceOutputTokens, true, { signal, timeoutMs: 60000 });
-      if (!next.trim() || textBytes(next) > notesBudget) {
+      const capped = truncateToBytes(dropOutOfScopeMarkers(next.trim(), [sourceId]), notesBudget);
+      if (!capped) {
         throw new Error(`Single-source reduction output invalid for ${sourceId}`);
       }
-      return next;
+      return capped;
     },
     notesBudget,
     signal,
@@ -527,28 +570,57 @@ async function buildBoundedDayNotes(localDate: string, segments: DiarySegment[],
       normalizedBlocks.push({ text: full, sourceIds: [block.id] });
       continue;
     }
-    normalizedBlocks.push(await reduceSingleSourceBlock(block.id, block.identityTag, block.text, budgets.notesBudget, budgets.reduceOutputTokens, signal));
+    normalizedBlocks.push(await reduceSingleSourceBlock(block.id, block.identityTag, block.text, budgets.notesBudget, Math.min(budgets.reduceOutputTokens, 4096), signal));
   }
 
   const reduceChunk = async (chunkText: string, chunkSourceIds: string[], targetBytes: number): Promise<{ text: string; sourceIds: string[] }> => {
-    const reduced = await callLLM(
-      `${REDUCE_SYSTEM}\n输出必须控制在 ${targetBytes} 字节以内，优先保留带 [[SRC:...]] 标记的关键事实。`,
-      chunkText,
-      undefined,
-      budgets.reduceOutputTokens,
-      true,
-      { signal, timeoutMs: 60000 },
-    );
+    // 输入过长时单次输出可能被 max_tokens 截断；按换行对半拆分后分别归并
+    const callReduce = async (text: string, depth: number): Promise<string> => {
+      try {
+        // 预算放大后单次归并输入可能很大，超时时间随输入大小放宽
+        const timeoutMs = Math.min(180_000, 60_000 + Math.floor(textBytes(text) / 1000) * 500);
+        return await callLLM(
+          `${REDUCE_SYSTEM}\n输出必须控制在 ${targetBytes} 字节以内，优先保留带 [[SRC:...]] 标记的关键事实。`,
+          text,
+          undefined,
+          budgets.reduceOutputTokens,
+          true,
+          { signal, timeoutMs },
+        );
+      } catch (error: any) {
+        const message = error instanceof Error ? error.message : String(error ?? "");
+        if (depth >= 3 || !/截断/.test(message)) throw error;
+        const mid = Math.floor(text.length / 2);
+        const before = text.lastIndexOf("\n", mid);
+        const after = text.indexOf("\n", mid);
+        const cut = before > 0 ? before : after;
+        if (cut <= 0 || cut >= text.length - 1) throw error;
+        const left = await callReduce(text.slice(0, cut), depth + 1);
+        const right = await callReduce(text.slice(cut + 1), depth + 1);
+        return `${left}\n${right}`;
+      }
+    };
+    const reduced = await callReduce(chunkText, 0);
     if (!reduced.trim()) {
       throw new Error(`Bounded note reduction output is empty for ${localDate}`);
     }
     // 模型偶尔会带出其他分块的来源 ID，直接丢弃而不是让整篇日记失败
-    const cleaned = dropOutOfScopeMarkers(reduced, chunkSourceIds);
-    const retainedIds = assertSourceSubsetOrThrow(cleaned, chunkSourceIds, `Diary reduction ${localDate}`);
-    if (chunkSourceIds.length > 0 && retainedIds.length === 0) {
-      throw new Error(`Diary reduction ${localDate} dropped all source markers for chunk`);
+    let cleaned = dropOutOfScopeMarkers(reduced, chunkSourceIds).trim();
+    if (!cleaned) {
+      throw new Error(`Bounded note reduction output is empty for ${localDate}`);
     }
-    return { text: cleaned.trim(), sourceIds: retainedIds };
+    cleaned = truncateToBytes(cleaned, targetBytes);
+    // 模型偶尔会完全丢掉来源标记；补回该分块自身的来源，保证事实仍可追溯
+    if (extractSourceMarkers(cleaned).length === 0 && chunkSourceIds.length > 0) {
+      const markerSuffix = chunkSourceIds.slice(0, 4).map(id => `[[SRC:${id}]]`).join(" ");
+      cleaned = truncateToBytes(cleaned, Math.max(200, targetBytes - textBytes(markerSuffix)));
+      cleaned = `${cleaned}\n${markerSuffix}`.trim();
+    }
+    if (!cleaned) {
+      throw new Error(`Bounded note reduction output is empty for ${localDate}`);
+    }
+    const retainedIds = assertSourceSubsetOrThrow(cleaned, chunkSourceIds, `Diary reduction ${localDate}`);
+    return { text: cleaned, sourceIds: retainedIds };
   };
 
   // 先用半预算打包，给归并输出留出余量，避免单次输出超过存储上限
@@ -638,6 +710,9 @@ export async function initDiaryService(): Promise<void> {
   await recoverDiaryStaleStates();
 }
 
+// 界面轮询只取轻量队列统计，避免被正在进行的原生转写请求拖慢
+export { getDiaryQueueStats };
+
 export async function getDiaryRuntimeStatus(): Promise<DiaryRuntimeStatus> {
   const [settings, queue, native] = await Promise.all([
     getDiarySettings(),
@@ -650,7 +725,7 @@ export async function getDiaryRuntimeStatus(): Promise<DiaryRuntimeStatus> {
     native,
     settings,
     queue,
-    processingActive,
+    processingActive: queueRun !== null,
     enrollmentActive,
   };
 }
@@ -720,7 +795,7 @@ export async function stopDiaryCapture(): Promise<void> {
   // 停止采集是优先级操作：先抢占/中止正在跑的转写与生成任务，
   // 再直接停原生服务，不排在生命周期队列后面等待。
   lifecycleEpoch += 1;
-  processingAbort?.abort();
+  queueRun?.abort.abort();
   for (const controller of generatingControllers.values()) {
     controller.abort();
   }
@@ -754,11 +829,31 @@ export async function importDiarySegmentsFromNative(): Promise<{ inserted: numbe
   if (!settings.consentGranted) return { inserted: 0, updated: 0, unchanged: 0 };
   const native = await getNative();
   if (!native) return { inserted: 0, updated: 0, unchanged: 0 };
-  checkLifecycleOrThrow(startEpoch, "segment import");
-  const segments = await native.listDiarySegments();
+
+  // 几千条片段一次性跨 JNI 转成 JS 对象会耗尽堆内存并让进程 abort，
+  // 必须分页导入；已有记录缓存跨页复用，避免每页都全表扫描。
+  const PAGE_SIZE = 300;
+  const cache = await createNativeSegmentImportCache();
+  let inserted = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let offset = 0;
+
+  while (true) {
+    checkLifecycleOrThrow(startEpoch, "segment import");
+    await checkConsentOrThrow("segment import");
+    const page = await native.listDiarySegmentsPage(offset, PAGE_SIZE);
+    if (!page.length) break;
+    const result = await importNativeDiarySegments(page, cache);
+    inserted += result.inserted;
+    updated += result.updated;
+    unchanged += result.unchanged;
+    offset += page.length;
+    if (page.length < PAGE_SIZE) break;
+  }
+
   checkLifecycleOrThrow(startEpoch, "segment import result");
-  await checkConsentOrThrow("segment import");
-  return importNativeDiarySegments(segments);
+  return { inserted, updated, unchanged };
 }
 
 export async function listDiaryDays(limit = 30): Promise<DailyDiary[]> {
@@ -819,7 +914,7 @@ export async function deleteFailedSegments(): Promise<{ deleted: number }> {
     await cancelAndDrainDiaryWorkers();
     const status = await getNativeStatusOrDefault();
     if (status.active) throw new Error("采集中无法删除片段");
-    const failed = (await listAllDiarySegments()).filter(item => item.state === "failed");
+    const failed = await listFailedDiarySegments();
     if (!failed.length) return { deleted: 0 };
 
     const native = await getNative();
@@ -843,19 +938,51 @@ export async function processDiaryQueue(limit = 4): Promise<{ processed: number;
   await waitForLifecycleMutation();
   const settings = await getDiarySettings();
   if (!settings.consentGranted) return { processed: 0, failed: 0, deleted: 0, skipped: true };
-  if (processingActive) return { processed: 0, failed: 0, deleted: 0, skipped: true };
 
-  const run = (async () => {
+  if (quotaBlockedUntil > Date.now()) {
+    console.error(`[DiaryQueue] skip: remote quota blocked, retry in ${Math.ceil((quotaBlockedUntil - Date.now()) / 1000)}s`);
+    return { processed: 0, failed: 0, deleted: 0, skipped: true };
+  }
+
+  if (queueRun) {
+    const idleMs = Date.now() - queueRun.lastActivityAt;
+    if (idleMs < STALE_RUN_MS) return { processed: 0, failed: 0, deleted: 0, skipped: true };
+    // 旧任务可能卡在不可中断的原生等待上，允许后台 tick 接管，避免整个队列永久停摆
+    console.error(`[DiaryQueue] takeover stale run=${queueRun.id} idle=${Math.round(idleMs / 1000)}s inflight=${queueRun.inFlight}`);
+    const stale = queueRun;
+    queueRun = null;
+    stale.abort.abort();
+  }
+
+  const run: DiaryQueueRun = {
+    id: ++queueRunCounter,
+    abort: new AbortController(),
+    startedAt: Date.now(),
+    lastActivityAt: Date.now(),
+    inFlight: 0,
+  };
+  queueRun = run;
+  const runSignal = run.abort.signal;
+
+  const runPromise = (async () => {
     const startEpoch = await assertLifecycleOpen("queue processing");
-    processingActive = true;
-    processingAbort = new AbortController();
     let processed = 0;
     let failed = 0;
     let deleted = 0;
 
     const processSegment = async (segment: DiarySegment): Promise<void> => {
+      const linked = createLinkedAbortSignal(runSignal);
+      const attemptStartedAt = Date.now();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        linked.controller.abort();
+      }, SEGMENT_TIMEOUT_MS);
+      run.inFlight += 1;
+      run.lastActivityAt = Date.now();
       try {
-        checkAbort(processingAbort!.signal);
+        const signal = linked.signal;
+        checkAbort(signal);
         checkLifecycleOrThrow(startEpoch, `segment ${segment.id}`);
         await checkConsentOrThrow(`segment ${segment.id}`);
         await markSegmentState(segment.id, "transcribing", "");
@@ -888,7 +1015,7 @@ export async function processDiaryQueue(limit = 4): Promise<{ processed: number;
         }
         debugLog(`[DiaryPerf] ${segment.id} identify=${Date.now() - identifyStartedAt}ms`);
 
-        checkAbort(processingAbort!.signal);
+        checkAbort(signal);
         checkLifecycleOrThrow(startEpoch, `segment ${segment.id} after identify`);
         await checkConsentOrThrow(`segment ${segment.id} after identify`);
 
@@ -897,7 +1024,7 @@ export async function processDiaryQueue(limit = 4): Promise<{ processed: number;
         try {
           transcript = await transcribeRemote(
             segment.filePath as string,
-            processingAbort!.signal,
+            signal,
             segmentTranscriptScope(segment.id),
           );
         } catch (error) {
@@ -912,7 +1039,8 @@ export async function processDiaryQueue(limit = 4): Promise<{ processed: number;
           }
           throw error;
         }
-        checkAbort(processingAbort!.signal);
+        quotaBlockedUntil = 0;
+        checkAbort(signal);
         checkLifecycleOrThrow(startEpoch, `segment ${segment.id} after stt`);
         await checkConsentOrThrow(`segment ${segment.id} after stt`);
         debugLog(`[DiaryPerf] ${segment.id} stt=${Date.now() - sttStartedAt}ms chars=${transcript.length}`);
@@ -925,10 +1053,14 @@ export async function processDiaryQueue(limit = 4): Promise<{ processed: number;
         }
 
         const notesStartedAt = Date.now();
-        const reducedNeutral = await compactTranscript(sanitizeForMarkers(transcript), undefined, {
-          signal: processingAbort!.signal,
-          checkpointScope: segmentNotesScope(segment.id),
-        });
+        // 短转写本身已经是精简事实，直接作为笔记可省掉一次模型调用（积压时显著提速）
+        const sanitized = sanitizeForMarkers(transcript);
+        const reducedNeutral = textBytes(sanitized) <= DIRECT_NOTES_MAX_BYTES
+          ? sanitized
+          : await compactTranscript(sanitized, undefined, {
+            signal,
+            checkpointScope: segmentNotesScope(segment.id),
+          });
         debugLog(`[DiaryPerf] ${segment.id} notes=${Date.now() - notesStartedAt}ms`);
         // 分段笔记里出现第一人称是正常的对话引用，不应整段失败；
         // 最终每日日记会统一做中性化校验。
@@ -937,7 +1069,7 @@ export async function processDiaryQueue(limit = 4): Promise<{ processed: number;
         }
         const factualNotes = `[[SRC:${segment.id}]] [${segmentIdentityTag(segment)}]\n${sanitizeForMarkers(reducedNeutral.trim())}`;
 
-        checkAbort(processingAbort!.signal);
+        checkAbort(signal);
         checkLifecycleOrThrow(startEpoch, `segment ${segment.id} before save`);
         await checkConsentOrThrow(`segment ${segment.id} before save`);
         await markSegmentResult(segment.id, {
@@ -949,49 +1081,75 @@ export async function processDiaryQueue(limit = 4): Promise<{ processed: number;
           windows: speakerWindows,
         });
         processed += 1;
+        run.lastActivityAt = Date.now();
+        if (processed % 25 === 0) {
+          console.error(`[DiaryQueue] progress run=${run.id} processed=${processed} failed=${failed} deleted=${deleted} elapsed=${Math.round((Date.now() - run.startedAt) / 1000)}s`);
+        }
       } catch (error: any) {
         if (isAbortError(error)) {
-          await markSegmentState(segment.id, "pending", "");
+          if (timedOut) {
+            console.error(`[DiaryQueue] timeout ${segment.id} after ${Math.round((Date.now() - attemptStartedAt) / 1000)}s`);
+          }
+          debugLog(`[DiaryPerf] ${segment.id} ${timedOut ? "timeout" : "aborted"}`);
+          await markSegmentState(segment.id, "pending", "").catch(() => {});
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error ?? "");
+        if (QUOTA_ERROR_RE.test(message)) {
+          // 余额/鉴权问题重试没有意义：保留 pending，不消耗重试次数，并暂停整条队列
+          quotaBlockedUntil = Date.now() + QUOTA_COOLDOWN_MS;
+          console.error(`[DiaryQueue] paused (quota/auth): ${message}`);
+          await markSegmentState(segment.id, "pending", "").catch(() => {});
+          run.abort.abort();
           return;
         }
         failed += 1;
+        console.error(`[DiaryQueue] seg failed ${segment.id} after ${Math.round((Date.now() - attemptStartedAt) / 1000)}s: ${message || "unknown"}`);
         debugLog(`[DiaryPerf] ${segment.id} failed=${error?.message ?? "unknown"}`);
-        await markSegmentState(segment.id, "failed", error?.message ?? "Diary segment processing failed");
+        await markSegmentState(segment.id, "failed", error?.message ?? "Diary segment processing failed").catch(() => {});
+      } finally {
+        clearTimeout(timer);
+        linked.dispose();
+        run.inFlight -= 1;
+        run.lastActivityAt = Date.now();
       }
     };
 
     try {
+      console.error(`[DiaryQueue] begin run=${run.id}`);
       checkLifecycleOrThrow(startEpoch, "queue import");
       await checkConsentOrThrow("queue import");
       await importDiarySegmentsFromNative();
       checkLifecycleOrThrow(startEpoch, "queue load pending");
       // limit <= 0 表示一次性处理当前所有待处理片段
       const pending = await listPendingDiarySegments(limit > 0 ? limit : 10000);
+      console.error(`[DiaryQueue] start run=${run.id} pending=${pending.length}`);
 
-      // 片段之间互相独立：并发处理可显著缩短整体等待时间
+      // 片段之间互相独立：并发处理可显著缩短整体等待时间（上传/转写是主要耗时）
       let cursor = 0;
-      const workerCount = Math.min(3, pending.length);
+      const workerCount = Math.min(8, pending.length);
       await Promise.all(Array.from({ length: workerCount }, async () => {
         while (true) {
           const index = cursor;
           cursor += 1;
           if (index >= pending.length) return;
+          run.lastActivityAt = Date.now();
           await processSegment(pending[index]);
         }
       }));
+      console.error(`[DiaryQueue] done run=${run.id} processed=${processed} failed=${failed} deleted=${deleted}`);
 
       return { processed, failed, deleted, skipped: false };
     } finally {
-      processingAbort = null;
-      processingActive = false;
+      if (queueRun === run) queueRun = null;
     }
   })();
 
-  processingPromise = run;
+  processingPromise = runPromise;
   try {
-    return await run;
+    return await runPromise;
   } finally {
-    if (processingPromise === run) processingPromise = null;
+    if (processingPromise === runPromise) processingPromise = null;
   }
 }
 
@@ -1000,7 +1158,7 @@ export async function processAllDiarySegments(): Promise<{ processed: number; fa
 }
 
 export function cancelDiaryProcessing(): void {
-  processingAbort?.abort();
+  queueRun?.abort.abort();
 }
 
 export async function generateDailyDiary(localDate: string, signal?: AbortSignal): Promise<DailyDiary> {
@@ -1047,21 +1205,35 @@ export async function generateDailyDiary(localDate: string, signal?: AbortSignal
       }
 
       const finalNotes = boundedNotes || "No notes available. Return empty arrays.";
+      // 大上下文下单次可送入几百 KB 笔记，超时时间随输入大小放宽
+      const finalTimeoutMs = Math.min(240_000, 90_000 + Math.floor(textBytes(finalNotes) / 1000) * 500);
       let content: DailyDiaryContent | null = null;
       let validationError: Error | null = null;
-      // 模型偶尔会漏写 sourceSegmentIds，校验失败时补一次纠正重试
+      // 模型偶尔会漏写 sourceSegmentIds 或输出被截断，校验失败时补一次纠正重试
       for (let attempt = 0; attempt < 2 && !content; attempt += 1) {
         const correction = validationError
-          ? `\n\nYour previous JSON failed validation: ${validationError.message}. Every non-empty timeline/topic/commitment/unresolved item must include at least one sourceSegmentIds entry copied exactly from the [[SRC:...]] labels above. Return strict JSON only.`
+          ? (/截断/.test(validationError.message)
+            ? "\n\nYour previous output was truncated. Return a much shorter strict JSON with at most 4 timeline entries, 4 topics, 2 commitments and 2 unresolved items."
+            : `\n\nYour previous JSON failed validation: ${validationError.message}. Every non-empty timeline/topic/commitment/unresolved item must include at least one sourceSegmentIds entry copied exactly from the [[SRC:...]] labels above. Return strict JSON only.`)
           : "";
-        const finalRaw = await callLLM(
-          DAILY_SYSTEM,
-          `${budgets.finalUserPrefix}${finalNotes}${correction}`,
-          undefined,
-          budgets.finalOutputTokens,
-          true,
-          { signal: linked.signal, timeoutMs: 90000 },
-        );
+        let finalRaw: string;
+        try {
+          finalRaw = await callLLM(
+            DAILY_SYSTEM,
+            `${budgets.finalUserPrefix}${finalNotes}${correction}`,
+            undefined,
+            budgets.finalOutputTokens,
+            true,
+            { signal: linked.signal, timeoutMs: finalTimeoutMs },
+          );
+        } catch (error: any) {
+          const message = error instanceof Error ? error.message : String(error ?? "");
+          if (/截断/.test(message)) {
+            validationError = new Error("模型输出被截断");
+            continue;
+          }
+          throw error;
+        }
         checkAbort(linked.signal);
         try {
           const candidate = normalizeContent(safeParseJson(finalRaw));
@@ -1076,20 +1248,37 @@ export async function generateDailyDiary(localDate: string, signal?: AbortSignal
       checkLifecycleOrThrow(startEpoch, `daily generation ${localDate} after final`);
       await checkConsentOrThrow(`daily generation ${localDate} after final`);
 
-      await saveDailyDiary(
-        localDate,
-        {
-          notes: boundedNotes,
-          sourceSegmentIds: retainedSourceIds,
-          content,
-        },
-        draftVersion,
-      );
-      const saved = await getDailyDiary(localDate);
+      let saved: DailyDiary | null = null;
+      try {
+        await saveDailyDiary(
+          localDate,
+          {
+            notes: boundedNotes,
+            sourceSegmentIds: retainedSourceIds,
+            content,
+          },
+          draftVersion,
+        );
+        saved = await getDailyDiary(localDate);
+      } catch (error: any) {
+        // 生成期间有片段完成转写会把日记版本号抬高：保留本次内容并标记待更新，避免整篇失败
+        if (/version changed during generation/i.test(String(error?.message ?? ""))) {
+          await saveDailyDiary(localDate, {
+            notes: boundedNotes,
+            sourceSegmentIds: retainedSourceIds,
+            content,
+          });
+          await markDayDirty(localDate, "late-transcript");
+          saved = await getDailyDiary(localDate);
+        } else {
+          throw error;
+        }
+      }
       if (!saved) throw new Error("Daily diary save failed");
       return saved;
     } catch (error: any) {
       if (!isAbortError(error)) {
+        console.error(`[DiaryGen] ${localDate} failed: ${error?.message ?? error}`);
         await markDailyDiaryFailed(localDate, error?.message ?? "日记生成失败");
       }
       throw error;
@@ -1105,19 +1294,40 @@ export async function generateDailyDiary(localDate: string, signal?: AbortSignal
   }
 }
 
+let lastQueueWaitLogAt = 0;
+
 export async function handleDiaryForeground(): Promise<void> {
-  await assertLifecycleOpen("foreground processing");
-  const settings = await getDiarySettings();
-  if (!settings.consentGranted) return;
-  await importDiarySegmentsFromNative();
-  // 失败片段自动重试有限次数，网络抖动或校验策略调整后无需手动逐条重试
-  await requeueRetryableFailedSegments(3).catch(() => {});
-  await processDiaryQueue(8);
-  await autoApplyRetention().catch(() => {});
+  try {
+    await assertLifecycleOpen("foreground processing");
+    const settings = await getDiarySettings();
+    if (!settings.consentGranted) return;
+    // 每次触发都把当前待处理队列一次清空；已有处理在跑时不重复导入和抢占
+    if (queueRun) {
+      const idleMs = Date.now() - queueRun.lastActivityAt;
+      if (idleMs < STALE_RUN_MS) {
+        const now = Date.now();
+        if (now - lastQueueWaitLogAt > 60_000) {
+          lastQueueWaitLogAt = now;
+          console.error(`[DiaryQueue] skip run=${queueRun.id} idle=${Math.round(idleMs / 1000)}s inflight=${queueRun.inFlight}`);
+        }
+        return;
+      }
+      console.error(`[DiaryQueue] stale run=${queueRun.id} idle=${Math.round(idleMs / 1000)}s, taking over`);
+    }
+    // processDiaryQueue 内部会导入一次，这里不再重复导入
+    await requeueRetryableFailedSegments(3).catch(() => {});
+    const result = await processDiaryQueue(0);
+    if (!result.skipped) {
+      await autoApplyRetention().catch(() => {});
+    }
+  } catch (error: any) {
+    console.error(`[DiaryQueue] trigger blocked: ${error?.message ?? error}`);
+  }
 }
 
 async function requeueRetryableFailedSegments(maxRetryCount: number): Promise<void> {
-  const failed = (await listAllDiarySegments()).filter(item => item.state === "failed");
+  // 只读失败片段需要的字段，避免把全部片段的转写/笔记读进内存
+  const failed = await listFailedDiarySegments();
   for (const item of failed) {
     // 原始音频已经不存在，重试也不可能成功，直接清理
     if (/音频文件不存在|audio_file_not_found/i.test(item.lastError)) {
@@ -1322,15 +1532,26 @@ export async function purgeDiaryData(includeDerived: boolean): Promise<void> {
     if (status.active) throw new Error("Stop diary capture before deleting diary data");
 
     const native = await getNative();
-    const knownLocalSegments = await listAllDiarySegments();
-    const allSegmentIds = new Set(knownLocalSegments.map(item => item.id));
+    const allSegmentIds = new Set(await listDiarySegmentIds());
 
     if (native) {
-      const imported = await native.listDiarySegments();
-      for (const segment of imported) {
-        allSegmentIds.add(segment.id);
+      // 分页收集原生片段 ID；先收集再删除，避免边删边分页导致偏移错位漏删
+      const nativeIds: string[] = [];
+      let offset = 0;
+      const PAGE_SIZE = 300;
+      while (true) {
+        const page = await native.listDiarySegmentsPage(offset, PAGE_SIZE);
+        if (!page.length) break;
+        for (const segment of page) {
+          allSegmentIds.add(segment.id);
+          nativeIds.push(segment.id);
+        }
+        offset += page.length;
+        if (page.length < PAGE_SIZE) break;
+      }
+      for (const id of nativeIds) {
         try {
-          await native.deleteDiarySegment(segment.id);
+          await native.deleteDiarySegment(id);
         } catch {
           // Keep local metadata to expose native deletion failures.
         }

@@ -326,6 +326,7 @@ export async function transcribeRemote(
         dataBytes: chunk.dataBytes,
         chunkIndex: chunk.index,
       });
+      const uploadStartedAt = Date.now();
       const text = await uploadOnce({
         key,
         signal,
@@ -338,6 +339,7 @@ export async function transcribeRemote(
         fileName: tempFile.name,
         mimeType: "audio/wav",
       });
+      console.error(`[STT] chunk ${chunk.index + 1}/${chunks.length} ms=${Date.now() - uploadStartedAt} bytes=${chunk.dataBytes}`);
       if (!text.trim()) throw new Error("Remote STT returned empty text");
       await saveCheckpoint(scope, op, ckInput, text);
       transcriptParts.push(text);

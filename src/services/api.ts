@@ -11,6 +11,29 @@ const MODEL_STORAGE_KEY = "llm_model_config";
 const DEFAULT_API_KEY = "sk-53c50605ed424977858f5d76bbe3174a";
 const DEFAULT_MODEL = "deepseek-flash";
 
+// SiliconFlow 免费对话模型白名单，避免误选付费模型导致账户欠费
+const SILICONFLOW_HOSTS = new Set(["api.siliconflow.cn", "api.siliconflow.com"]);
+const SILICONFLOW_FREE_MODELS = new Set([
+  "tencent/Hunyuan-MT-7B",
+  "XingChenAGI/Xing4.0-29B",
+  "PaddlePaddle/PaddleOCR-VL-1.5",
+]);
+
+function isSiliconFlowEndpoint(endpoint: string): boolean {
+  try {
+    return SILICONFLOW_HOSTS.has(new URL(endpoint).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function assertSiliconFlowFreeModel(config: ModelConfig): void {
+  if (!isSiliconFlowEndpoint(config.endpoint)) return;
+  if (!SILICONFLOW_FREE_MODELS.has(config.model.trim())) {
+    throw new Error(`SiliconFlow 接口只允许免费模型：${Array.from(SILICONFLOW_FREE_MODELS).join("、")}`);
+  }
+}
+
 export interface ModelConfig {
   endpoint: string;
   model: string;
@@ -18,13 +41,21 @@ export interface ModelConfig {
   format: "anthropic" | "openai";
 }
 
+// 旧版本默认是 32K；升级后把仍停留在旧默认值的配置自动抬到 1M
+const LEGACY_DEFAULT_CONTEXT_LIMIT = 32768;
+
 export async function getModelConfig(): Promise<ModelConfig> {
   if (cachedModelConfig) return cachedModelConfig;
   const raw = isWeb ? webGet(MODEL_STORAGE_KEY) : await nativeGet(MODEL_STORAGE_KEY);
-  const config = raw ? JSON.parse(raw) : {
+  let config = raw ? JSON.parse(raw) : {
     endpoint: API_URL, model: DEFAULT_MODEL, contextLimit: DEFAULT_CONTEXT_LIMIT, format: "anthropic",
   };
   validateModelConfig(config);
+  if (config.contextLimit === LEGACY_DEFAULT_CONTEXT_LIMIT) {
+    config = { ...config, contextLimit: DEFAULT_CONTEXT_LIMIT };
+    if (isWeb) webSet(MODEL_STORAGE_KEY, JSON.stringify(config));
+    else await nativeSet(MODEL_STORAGE_KEY, JSON.stringify(config));
+  }
   cachedModelConfig = config;
   return config;
 }
@@ -40,6 +71,7 @@ function validateModelConfig(config: ModelConfig): void {
 
 export async function saveModelConfig(config: ModelConfig): Promise<void> {
   validateModelConfig(config);
+  assertSiliconFlowFreeModel(config);
   const raw = JSON.stringify({ ...config, endpoint: config.endpoint.trim(), model: config.model.trim() });
   cachedModelConfig = { ...config, endpoint: config.endpoint.trim(), model: config.model.trim() };
   if (isWeb) webSet(MODEL_STORAGE_KEY, raw);
@@ -144,6 +176,7 @@ export async function callLLM(
 ): Promise<string> {
   checkAbort(options.signal);
   const config = await getModelConfig();
+  assertSiliconFlowFreeModel(config);
   assertRequestBudget(systemPrompt, userMessage, maxTokens, config.contextLimit);
   const key = apiKey ?? (await getApiKey());
   if (!key) throw new Error("未配置 API 密钥");

@@ -1,9 +1,10 @@
 import { Buffer } from "buffer";
 
-export const DEFAULT_CONTEXT_LIMIT = 32768;
+// 默认按模型最大上下文（1M tokens）配置；请求预算校验也以此为上限
+export const DEFAULT_CONTEXT_LIMIT = 1_000_000;
 export const TEXT_BUDGET = 6000;
-// 每日日记的中间笔记上限：比普通文本预算宽一些，避免为压到 6000 字节反复归并
-export const DIARY_NOTES_BUDGET = 12000;
+// 每日日记的中间笔记上限：上下文已提升到 1M，单次可送入更多笔记，尽量一轮直出、减少归并轮次
+export const DIARY_NOTES_BUDGET = 250_000;
 
 export function textBytes(text: string): number {
   return Buffer.byteLength(text, "utf8");

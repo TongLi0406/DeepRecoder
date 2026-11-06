@@ -69,6 +69,7 @@ interface PcmRecorderNativeModule {
   pauseDiary(): Promise<void>;
   resumeDiary(): Promise<void>;
   listDiarySegments(): Promise<DiaryNativeSegment[]>;
+  listDiarySegmentsPage(offset: number, limit: number): Promise<DiaryNativeSegment[]>;
   deleteDiarySegment(id: string): Promise<void>;
 
   identifySpeaker(filePath: string): Promise<SpeakerEvidence>;
@@ -78,6 +79,8 @@ interface PcmRecorderNativeModule {
   httpPostJson(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<HttpResponse>;
   httpPostMultipart(url: string, headers: Record<string, string>, fields: Record<string, string>,
     filePath: string, fileName: string, mimeType: string, timeoutMs: number): Promise<HttpResponse>;
+
+  addListener(eventName: string, listener: (...args: any[]) => void): { remove: () => void };
 }
 
 const NativeModule = requireNativeModule<PcmRecorderNativeModule>('PcmRecorder');
@@ -99,6 +102,7 @@ export const PcmRecorder = {
   pauseDiary: () => NativeModule.pauseDiary(),
   resumeDiary: () => NativeModule.resumeDiary(),
   listDiarySegments: () => NativeModule.listDiarySegments(),
+  listDiarySegmentsPage: (offset: number, limit: number) => NativeModule.listDiarySegmentsPage(offset, limit),
   deleteDiarySegment: (id: string) => NativeModule.deleteDiarySegment(id),
 
   identifySpeaker: (filePath: string) => NativeModule.identifySpeaker(filePath),
@@ -110,6 +114,8 @@ export const PcmRecorder = {
   httpPostMultipart: (url: string, headers: Record<string, string>, fields: Record<string, string>,
     filePath: string, fileName: string, mimeType: string, timeoutMs = 110000) =>
     NativeModule.httpPostMultipart(url, headers, fields, filePath, fileName, mimeType, timeoutMs),
+
+  addListener: (eventName: string, listener: (...args: any[]) => void) => NativeModule.addListener(eventName, listener),
 };
 
 export default PcmRecorder;
